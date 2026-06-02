@@ -1,0 +1,10 @@
+{
+  "defaultAction": "SCMP_ACT_ALLOW",
+  "architectures": ["SCMP_ARCH_X86_64"],
+  "syscalls": [
+    {
+      "names": ["clone", "clone3", "ptrace", "perf_event_open", "bpf", "swapon", "swapoff", "mount", "umount", "umount2", "reboot", "kexec_load", "init_module", "finit_module", "delete_module", "nfsservctl", "get_kernel_syms", "create_module", "query_module"],
+      "action": "SCMP_ACT_ERRNO"
+    }
+  ]
+}
