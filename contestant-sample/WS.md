@@ -10,28 +10,30 @@ All client requests must contain standard JSON-RPC 2.0 members. The presence of 
 
 #### Client Request Example
 
+```json
 {
-"jsonrpc": "2.0",
-"method": "order.create.limit",
-"params": {},
-"id": 10003
+  "jsonrpc": "2.0",
+  "method": "order.create.limit",
+  "params": {},
+  "id": 10003
 }
+```
 
 #### Client Request Schema
 
+```json
 {
-"$schema": "http://json-schema.org/draft-07/schema",
-"type": "object",
-"properties": {
-"jsonrpc": { "type": "string", "const": "2.0" },
-"method": { "type": "string" },
-"params": { "type": "object" },
-"id": {
-"type": ["string", "integer"]
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "jsonrpc": { "type": "string", "const": "2.0" },
+    "method": { "type": "string" },
+    "params": { "type": "object" },
+    "id": { "type": "integer" }
+  },
+  "required": ["jsonrpc", "method", "params", "id"]
 }
-},
-"required": ["jsonrpc", "method", "params", "id"]
-}
+```
 
 ### 1.2 Server Synchronous Response Envelope (Success Ack)
 
@@ -39,28 +41,36 @@ Returned immediately by the server upon accepting a valid message into the gatew
 
 #### Success Response Example
 
+```json
 {
-"jsonrpc": "2.0",
-"result": {
-"status": "acknowledged"
-},
-"id": 10003
+  "jsonrpc": "2.0",
+  "result": {
+    "status": "acknowledged"
+  },
+  "id": 10003
 }
+```
 
 #### Success Response Schema
 
+```json
 {
-"$schema": "http://json-schema.org/draft-07/schema",
-"type": "object",
-"properties": {
-"jsonrpc": { "type": "string", "const": "2.0" },
-"result": { "type": "object" },
-"id": {
-"type": ["string", "integer"]
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "jsonrpc": { "type": "string", "const": "2.0" },
+    "result": {
+      "type": "object",
+      "properties": {
+        "status": { "type": "string", "const": "acknowledged" }
+      },
+      "required": ["status"]
+    },
+    "id": { "type": "integer" }
+  },
+  "required": ["jsonrpc", "result", "id"]
 }
-},
-"required": ["jsonrpc", "result", "id"]
-}
+```
 
 ### 1.3 Server Synchronous Response Envelope (System/Parameter Error)
 
@@ -68,110 +78,77 @@ Returned immediately if a client request fails basic formatting, transport valid
 
 #### Error Response Example
 
+```json
 {
-"jsonrpc": "2.0",
-"error": {
-"code": -32602,
-"message": "Invalid params",
-"data": {
-"details": "Missing parameter: 'price' is required for limit orders."
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32602,
+    "message": "Invalid params",
+    "data": {
+      "details": "Missing parameter: 'price' is required for limit orders."
+    }
+  },
+  "id": 10003
 }
-},
-"id": 10003
-}
+```
 
 #### Error Response Schema
 
+```json
 {
-"$schema": "http://json-schema.org/draft-07/schema",
-"type": "object",
-"properties": {
-"jsonrpc": { "type": "string", "const": "2.0" },
-"error": {
-"type": "object",
-"properties": {
-"code": { "type": "integer" },
-"message": { "type": "string" },
-"data": {
-"type": "object",
-"properties": {
-"details": { "type": "string" }
-},
-"required": ["details"]
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "jsonrpc": { "type": "string", "const": "2.0" },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "integer" },
+        "message": { "type": "string" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "details": { "type": "string" }
+          },
+          "required": ["details"]
+        }
+      },
+      "required": ["code", "message"]
+    },
+    "id": { "type": "integer" }
+  },
+  "required": ["jsonrpc", "error", "id"]
 }
-},
-"required": ["code", "message"]
-},
-"id": {
-"type": ["string", "integer", "null"]
-}
-},
-"required": ["jsonrpc", "error", "id"]
-}
+```
 
-### 1.4 Server-Initiated Request Envelope (Asynchronous State Pushes)
+### 1.4 Server-Initiated Notification Envelope (Asynchronous State Pushes)
 
-Engine updates, execution reports, and cancel updates are pushed as server-initiated requests. They contain a server-generated id. The client must synchronously reply to confirm receipt.
+Engine updates, execution reports, and cancel updates are pushed as server-initiated notifications. They do not contain a server-generated id.
 
-#### Server-Initiated Request Example
+#### Server-Initiated Notification Example
 
+```json
 {
-"jsonrpc": "2.0",
-"method": "order.report.fill",
-"params": {},
-"id": 20001
+  "jsonrpc": "2.0",
+  "method": "order.report.fill",
+  "params": {}
 }
+```
 
-#### Server-Initiated Request Schema
+#### Server-Initiated Notification Schema
 
+```json
 {
-"$schema": "http://json-schema.org/draft-07/schema",
-"type": "object",
-"properties": {
-"jsonrpc": { "type": "string", "const": "2.0" },
-"method": { "type": "string" },
-"params": { "type": "object" },
-"id": {
-"type": ["string", "integer"]
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "jsonrpc": { "type": "string", "const": "2.0" },
+    "method": { "type": "string" },
+    "params": { "type": "object" }
+  },
+  "required": ["jsonrpc", "method", "params"]
 }
-},
-"required": ["jsonrpc", "method", "params", "id"]
-}
-
-### 1.5 Client Response to Server Envelope
-
-Sent synchronously by the client to confirm successful receipt of a server-initiated request.
-
-#### Client Response Example
-
-{
-"jsonrpc": "2.0",
-"result": {
-"status": "received"
-},
-"id": 20001
-}
-
-#### Client Response Schema
-
-{
-"$schema": "http://json-schema.org/draft-07/schema",
-"type": "object",
-"properties": {
-"jsonrpc": { "type": "string", "const": "2.0" },
-"result": {
-"type": "object",
-"properties": {
-"status": { "type": "string", "const": "received" }
-},
-"required": ["status"]
-},
-"id": {
-"type": ["string", "integer"]
-}
-},
-"required": ["jsonrpc", "result", "id"]
-}
+```
 
 ## 2. Client-Initiated Transactions
 
@@ -179,358 +156,401 @@ Sent synchronously by the client to confirm successful receipt of a server-initi
 
 #### CLIENT Request
 
+```json
 {
-"jsonrpc": "2.0",
-"method": "order.create.limit",
-"params": {
-"sender_id": "CLIENT01",
-"target_id": "XCANG3",
-"sending_time": "2026-06-04T14:34:00.000Z",
-"cl_ord_id": "CL_ORD_03",
-"symbol": "AAPL",
-"side": "buy",
-"qty": 100,
-"price": 150.25,
-"seq": 1,
-},
-"id": 10003
+  "jsonrpc": "2.0",
+  "method": "order.create.limit",
+  "params": {
+    "sender_id": "CLIENT01",
+    "target_id": "XCANG3",
+    "sending_time": "2026-06-04T14:34:00.000Z",
+    "cl_ord_id": "CL_ORD_03",
+    "symbol": "AAPL",
+    "side": "buy",
+    "qty": 100,
+    "price": 150.25,
+    "seq": 1
+  },
+  "id": 10003
 }
+```
 
+```json
 {
-"$schema": "http://json-schema.org/draft-07/schema",
-"type": "object",
-"properties": {
-"jsonrpc": { "type": "string", "const": "2.0" },
-"method": { "type": "string", "const": "order.create.limit" },
-"params": {
-"type": "object",
-"properties": {
-"sender_id": { "type": "string" },
-"target_id": { "type": "string", "const": "XCANG3" },
-"sending_time": { "type": "string", "format": "date-time" },
-"cl_ord_id": { "type": "string" },
-"symbol": { "type": "string" },
-"side": { "type": "string", "enum": ["buy", "sell"] },
-"qty": { "type": "integer", "minimum": 1 },
-"price": { "type": "number", "minimum": 0.0001 },
-"seq": { "type": "integer", "minimum": 1 }
-},
-"required": ["sender_id", "target_id", "sending_time", "cl_ord_id", "symbol", "side", "qty", "price", "seq"]
-},
-"id": { "type": ["string", "integer"] }
-},
-"required": ["jsonrpc", "method", "params", "id"]
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "jsonrpc": { "type": "string", "const": "2.0" },
+    "method": { "type": "string", "const": "order.create.limit" },
+    "params": {
+      "type": "object",
+      "properties": {
+        "sender_id": { "type": "string" },
+        "target_id": { "type": "string", "const": "XCANG3" },
+        "sending_time": { "type": "string", "format": "date-time" },
+        "cl_ord_id": { "type": "string" },
+        "symbol": { "type": "string" },
+        "side": { "type": "string", "enum": ["buy", "sell"] },
+        "qty": { "type": "integer", "minimum": 1 },
+        "price": { "type": "number", "minimum": 0.0001 },
+        "seq": { "type": "integer", "minimum": 1 }
+      },
+      "required": [
+        "sender_id",
+        "target_id",
+        "sending_time",
+        "cl_ord_id",
+        "symbol",
+        "side",
+        "qty",
+        "price",
+        "seq"
+      ]
+    },
+    "id": { "type": "integer" }
+  },
+  "required": ["jsonrpc", "method", "params", "id"]
 }
+```
 
 #### XCANG3 Synchronous Response (Immediate Success Ack)
 
+```json
 {
-"jsonrpc": "2.0",
-"result": {
-"cl_ord_id": "CL_ORD_03",
-"status": "acknowledged",
-"received_time": "2026-06-04T14:34:00.050Z"
-},
-"id": 10003
+  "jsonrpc": "2.0",
+  "result": {
+    "cl_ord_id": "CL_ORD_03",
+    "status": "acknowledged",
+    "sending_time": "2026-06-04T14:34:00.050Z"
+  },
+  "id": 10003
 }
+```
 
+```json
 {
-"$schema": "http://json-schema.org/draft-07/schema",
-"type": "object",
-"properties": {
-"jsonrpc": { "type": "string", "const": "2.0" },
-"result": {
-"type": "object",
-"properties": {
-"cl_ord_id": { "type": "string" },
-"status": { "type": "string", "const": "acknowledged" },
-"received_time": { "type": "string", "format": "date-time" }
-},
-"required": ["cl_ord_id", "status", "received_time"]
-},
-"id": { "type": ["string", "integer"] }
-},
-"required": ["jsonrpc", "result", "id"]
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "jsonrpc": { "type": "string", "const": "2.0" },
+    "result": {
+      "type": "object",
+      "properties": {
+        "cl_ord_id": { "type": "string" },
+        "status": { "type": "string", "const": "acknowledged" },
+        "sending_time": { "type": "string", "format": "date-time" }
+      },
+      "required": ["cl_ord_id", "status", "sending_time"]
+    },
+    "id": { "type": "integer" }
+  },
+  "required": ["jsonrpc", "result", "id"]
 }
+```
 
 ### 2.2 Market Order Placement (order.create.market)
 
 #### CLIENT Request
 
+```json
 {
-"jsonrpc": "2.0",
-"method": "order.create.market",
-"params": {
-"sender_id": "CLIENT01",
-"target_id": "XCANG3",
-"sending_time": "2026-06-04T14:33:05.000Z",
-"cl_ord_id": "CL_ORD_02",
-"symbol": "AAPL",
-"side": "sell",
-"qty": 100,
-"seq": 1
-},
-"id": 10004
+  "jsonrpc": "2.0",
+  "method": "order.create.market",
+  "params": {
+    "sender_id": "CLIENT01",
+    "target_id": "XCANG3",
+    "sending_time": "2026-06-04T14:33:05.000Z",
+    "cl_ord_id": "CL_ORD_02",
+    "symbol": "AAPL",
+    "side": "sell",
+    "qty": 100,
+    "seq": 1
+  },
+  "id": 10004
 }
+```
 
+```json
 {
-"$schema": "http://json-schema.org/draft-07/schema",
-"type": "object",
-"properties": {
-"jsonrpc": { "type": "string", "const": "2.0" },
-"method": { "type": "string", "const": "order.create.market" },
-"params": {
-"type": "object",
-"properties": {
-"sender_id": { "type": "string" },
-"target_id": { "type": "string", "const": "XCANG3" },
-"sending_time": { "type": "string", "format": "date-time" },
-"cl_ord_id": { "type": "string" },
-"symbol": { "type": "string" },
-"side": { "type": "string", "enum": ["buy", "sell"] },
-"qty": { "type": "integer", "minimum": 1 },
-"seq": { "type": "integer", "minimum": 1 }
-},
-"required": ["sender_id", "target_id", "sending_time", "cl_ord_id", "symbol", "side", "qty", "seq"]
-},
-"id": { "type": ["string", "integer"] }
-},
-"required": ["jsonrpc", "method", "params", "id"]
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "jsonrpc": { "type": "string", "const": "2.0" },
+    "method": { "type": "string", "const": "order.create.market" },
+    "params": {
+      "type": "object",
+      "properties": {
+        "sender_id": { "type": "string" },
+        "target_id": { "type": "string", "const": "XCANG3" },
+        "sending_time": { "type": "string", "format": "date-time" },
+        "cl_ord_id": { "type": "string" },
+        "symbol": { "type": "string" },
+        "side": { "type": "string", "enum": ["buy", "sell"] },
+        "qty": { "type": "integer", "minimum": 1 },
+        "seq": { "type": "integer", "minimum": 1 }
+      },
+      "required": [
+        "sender_id",
+        "target_id",
+        "sending_time",
+        "cl_ord_id",
+        "symbol",
+        "side",
+        "qty",
+        "seq"
+      ]
+    },
+    "id": { "type": "integer" }
+  },
+  "required": ["jsonrpc", "method", "params", "id"]
 }
+```
 
 #### XCANG3 Synchronous Response (Immediate Success Ack)
 
+```json
 {
-"jsonrpc": "2.0",
-"result": {
-"cl_ord_id": "CL_ORD_02",
-"status": "acknowledged",
-"received_time": "2026-06-04T14:33:05.045Z"
-},
-"id": 10004
+  "jsonrpc": "2.0",
+  "result": {
+    "cl_ord_id": "CL_ORD_02",
+    "status": "acknowledged",
+    "sending_time": "2026-06-04T14:33:05.045Z"
+  },
+  "id": 10004
 }
+```
 
+```json
 {
-"$schema": "http://json-schema.org/draft-07/schema",
-"type": "object",
-"properties": {
-"jsonrpc": { "type": "string", "const": "2.0" },
-"result": {
-"type": "object",
-"properties": {
-"cl_ord_id": { "type": "string" },
-"status": { "type": "string", "const": "acknowledged" },
-"received_time": { "type": "string", "format": "date-time" }
-},
-"required": ["cl_ord_id", "status", "received_time"]
-},
-"id": { "type": ["string", "integer"] }
-},
-"required": ["jsonrpc", "result", "id"]
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "jsonrpc": { "type": "string", "const": "2.0" },
+    "result": {
+      "type": "object",
+      "properties": {
+        "cl_ord_id": { "type": "string" },
+        "status": { "type": "string", "const": "acknowledged" },
+        "sending_time": { "type": "string", "format": "date-time" }
+      },
+      "required": ["cl_ord_id", "status", "sending_time"]
+    },
+    "id": { "type": "integer" }
+  },
+  "required": ["jsonrpc", "result", "id"]
 }
+```
 
-## 3. Server-Initiated Asynchronous Transactions
+## 3. Server-Initiated Asynchronous Notification
 
-Once the gateway routes orders to the core matching engine, downstream execution and reject states are pushed as Server-Initiated Requests.
+Once the gateway routes orders to the core matching engine, downstream execution and reject states are pushed as Server-Initiated Notifications.
 
-### 3.1 Asynchronous Partially Filled Report (order.report.partial)
+### 3.1 Partially Filled Report (order.report.partial)
 
-#### XCANG3 Request
+#### XCANG3 Notification
 
+```json
 {
-"jsonrpc": "2.0",
-"method": "order.report.partial",
-"params": {
-"sender_id": "XCANG3",
-"target_id": "CLIENT01",
-"sending_time": "2026-06-04T14:35:00.000Z",
-"order_id": "EX_ORD_99",
-"cl_ord_id": "CL_ORD_03",
-"exec_id": "FILL_882",
-"symbol": "AAPL",
-"side": "buy",
-"qty": 100,
-"leaves_qty": 60,
-"cum_qty": 40,
-"last_shares": 40,
-"last_px": 150.25,
-"avg_px": 150.25
-},
-"id": 20001
+  "jsonrpc": "2.0",
+  "method": "order.report.partial",
+  "params": {
+    "sender_id": "XCANG3",
+    "target_id": "CLIENT01",
+    "sending_time": "2026-06-04T14:35:00.000Z",
+    "ex_ord_id": "EX_ORD_99",
+    "cl_ord_id": "CL_ORD_03",
+    "exec_id": "FILL_882",
+    "symbol": "AAPL",
+    "side": "buy",
+    "qty": 100,
+    "leaves_qty": 60,
+    "cum_qty": 40,
+    "last_shares": 40,
+    "last_px": 150.25,
+    "avg_px": 150.25
+  }
 }
+```
 
+```json
 {
-"$schema": "http://json-schema.org/draft-07/schema",
-"type": "object",
-"properties": {
-"jsonrpc": { "type": "string", "const": "2.0" },
-"method": { "type": "string", "const": "order.report.partial" },
-"params": {
-"type": "object",
-"properties": {
-"sender_id": { "type": "string", "const": "XCANG3" },
-"target_id": { "type": "string" },
-"sending_time": { "type": "string", "format": "date-time" },
-"order_id": { "type": "string" },
-"cl_ord_id": { "type": "string" },
-"exec_id": { "type": "string" },
-"symbol": { "type": "string" },
-"side": { "type": "string", "enum": ["buy", "sell"] },
-"qty": { "type": "integer" },
-"leaves_qty": { "type": "integer" },
-"cum_qty": { "type": "integer" },
-"last_shares": { "type": "integer" },
-"last_px": { "type": "number" },
-"avg_px": { "type": "number" }
-},
-"required": ["sender_id", "target_id", "sending_time", "order_id", "cl_ord_id", "exec_id", "symbol", "side", "qty", "leaves_qty", "cum_qty", "last_shares", "last_px", "avg_px"]
-},
-"id": { "type": ["string", "integer"] }
-},
-"required": ["jsonrpc", "method", "params", "id"]
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "jsonrpc": { "type": "string", "const": "2.0" },
+    "method": { "type": "string", "const": "order.report.partial" },
+    "params": {
+      "type": "object",
+      "properties": {
+        "sender_id": { "type": "string", "const": "XCANG3" },
+        "target_id": { "type": "string" },
+        "sending_time": { "type": "string", "format": "date-time" },
+        "ex_ord_id": { "type": "string" },
+        "cl_ord_id": { "type": "string" },
+        "exec_id": { "type": "string" },
+        "symbol": { "type": "string" },
+        "side": { "type": "string", "enum": ["buy", "sell"] },
+        "qty": { "type": "integer" },
+        "leaves_qty": { "type": "integer" },
+        "cum_qty": { "type": "integer" },
+        "last_shares": { "type": "integer" },
+        "last_px": { "type": "number" },
+        "avg_px": { "type": "number" }
+      },
+      "required": [
+        "sender_id",
+        "target_id",
+        "sending_time",
+        "ex_ord_id",
+        "cl_ord_id",
+        "exec_id",
+        "symbol",
+        "side",
+        "qty",
+        "leaves_qty",
+        "cum_qty",
+        "last_shares",
+        "last_px",
+        "avg_px"
+      ]
+    }
+  },
+  "required": ["jsonrpc", "method", "params"]
 }
+```
 
-#### CLIENT Synchronous Response
+### 3.2 Fully Filled Report (order.report.fill)
 
+#### XCANG3 Notification
+
+```json
 {
-"jsonrpc": "2.0",
-"result": {
-"status": "received"
-},
-"id": 20001
+  "jsonrpc": "2.0",
+  "method": "order.report.fill",
+  "params": {
+    "sender_id": "XCANG3",
+    "target_id": "CLIENT01",
+    "sending_time": "2026-06-04T14:35:05.000Z",
+    "ex_ord_id": "EX_ORD_99",
+    "cl_ord_id": "CL_ORD_03",
+    "exec_id": "FILL_883",
+    "symbol": "AAPL",
+    "side": "buy",
+    "qty": 100,
+    "leaves_qty": 0,
+    "cum_qty": 100,
+    "last_shares": 60,
+    "last_px": 150.25,
+    "avg_px": 150.25
+  }
 }
+```
 
-### 3.2 Asynchronous Fully Filled Report (order.report.fill)
-
-#### XCANG3 Request
-
+```json
 {
-"jsonrpc": "2.0",
-"method": "order.report.fill",
-"params": {
-"sender_id": "XCANG3",
-"target_id": "CLIENT01",
-"sending_time": "2026-06-04T14:35:05.000Z",
-"order_id": "EX_ORD_99",
-"cl_ord_id": "CL_ORD_03",
-"exec_id": "FILL_883",
-"symbol": "AAPL",
-"side": "buy",
-"qty": 100,
-"leaves_qty": 0,
-"cum_qty": 100,
-"last_shares": 60,
-"last_px": 150.25,
-"avg_px": 150.25
-},
-"id": 20002
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "jsonrpc": { "type": "string", "const": "2.0" },
+    "method": { "type": "string", "const": "order.report.fill" },
+    "params": {
+      "type": "object",
+      "properties": {
+        "sender_id": { "type": "string", "const": "XCANG3" },
+        "target_id": { "type": "string" },
+        "sending_time": { "type": "string", "format": "date-time" },
+        "ex_ord_id": { "type": "string" },
+        "cl_ord_id": { "type": "string" },
+        "exec_id": { "type": "string" },
+        "symbol": { "type": "string" },
+        "side": { "type": "string", "enum": ["buy", "sell"] },
+        "qty": { "type": "integer" },
+        "leaves_qty": { "type": "integer", "const": 0 },
+        "cum_qty": { "type": "integer" },
+        "last_shares": { "type": "integer" },
+        "last_px": { "type": "number" },
+        "avg_px": { "type": "number" }
+      },
+      "required": [
+        "sender_id",
+        "target_id",
+        "sending_time",
+        "ex_ord_id",
+        "cl_ord_id",
+        "exec_id",
+        "symbol",
+        "side",
+        "qty",
+        "leaves_qty",
+        "cum_qty",
+        "last_shares",
+        "last_px",
+        "avg_px"
+      ]
+    }
+  },
+  "required": ["jsonrpc", "method", "params"]
 }
+```
 
+### 3.3 Business Logic Order Reject Report (order.report.rejected)
+
+#### XCANG3 Notification
+
+```json
 {
-"$schema": "http://json-schema.org/draft-07/schema",
-"type": "object",
-"properties": {
-"jsonrpc": { "type": "string", "const": "2.0" },
-"method": { "type": "string", "const": "order.report.fill" },
-"params": {
-"type": "object",
-"properties": {
-"sender_id": { "type": "string", "const": "XCANG3" },
-"target_id": { "type": "string" },
-"sending_time": { "type": "string", "format": "date-time" },
-"order_id": { "type": "string" },
-"cl_ord_id": { "type": "string" },
-"exec_id": { "type": "string" },
-"symbol": { "type": "string" },
-"side": { "type": "string", "enum": ["buy", "sell"] },
-"qty": { "type": "integer" },
-"leaves_qty": { "type": "integer", "const": 0 },
-"cum_qty": { "type": "integer" },
-"last_shares": { "type": "integer" },
-"last_px": { "type": "number" },
-"avg_px": { "type": "number" }
-},
-"required": ["sender_id", "target_id", "sending_time", "order_id", "cl_ord_id", "exec_id", "symbol", "side", "qty", "leaves_qty", "cum_qty", "last_shares", "last_px", "avg_px"]
-},
-"id": { "type": ["string", "integer"] }
-},
-"required": ["jsonrpc", "method", "params", "id"]
+  "jsonrpc": "2.0",
+  "method": "order.report.rejected",
+  "params": {
+    "sender_id": "XCANG3",
+    "target_id": "CLIENT01",
+    "sending_time": "2026-06-04T14:33:06.000Z",
+    "cl_ord_id": "CL_ORD_02",
+    "exec_id": "REJ_771",
+    "symbol": "AAPL",
+    "side": "sell",
+    "qty": 100,
+    "reject_reason": "Insufficient margin balance"
+  }
 }
+```
 
-#### CLIENT Synchronous Response
-
+```json
 {
-"jsonrpc": "2.0",
-"result": {
-"status": "received"
-},
-"id": 20002
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "jsonrpc": { "type": "string", "const": "2.0" },
+    "method": { "type": "string", "const": "order.report.rejected" },
+    "params": {
+      "type": "object",
+      "properties": {
+        "sender_id": { "type": "string", "const": "XCANG3" },
+        "target_id": { "type": "string" },
+        "sending_time": { "type": "string", "format": "date-time" },
+        "cl_ord_id": { "type": "string" },
+        "exec_id": { "type": "string" },
+        "symbol": { "type": "string" },
+        "side": { "type": "string", "enum": ["buy", "sell"] },
+        "qty": { "type": "integer" },
+        "reject_reason": { "type": "string" }
+      },
+      "required": [
+        "sender_id",
+        "target_id",
+        "sending_time",
+        "cl_ord_id",
+        "exec_id",
+        "symbol",
+        "side",
+        "qty",
+        "reject_reason"
+      ]
+    }
+  },
+  "required": ["jsonrpc", "method", "params"]
 }
-
-### 3.3 Asynchronous Business Logic Order Reject (order.report.rejected)
-
-#### XCANG3 Request
-
-{
-"jsonrpc": "2.0",
-"method": "order.report.rejected",
-"params": {
-"sender_id": "XCANG3",
-"target_id": "CLIENT01",
-"sending_time": "2026-06-04T14:33:06.000Z",
-"order_id": "NONE",
-"cl_ord_id": "CL_ORD_02",
-"exec_id": "REJ_771",
-"symbol": "AAPL",
-"side": "sell",
-"qty": 100,
-"leaves_qty": 0,
-"cum_qty": 0,
-"avg_px": 0.00,
-"reject_reason": "Insufficient margin balance"
-},
-"id": 20003
-}
-
-{
-"$schema": "http://json-schema.org/draft-07/schema",
-"type": "object",
-"properties": {
-"jsonrpc": { "type": "string", "const": "2.0" },
-"method": { "type": "string", "const": "order.report.rejected" },
-"params": {
-"type": "object",
-"properties": {
-"sender_id": { "type": "string", "const": "XCANG3" },
-"target_id": { "type": "string" },
-"sending_time": { "type": "string", "format": "date-time" },
-"order_id": { "type": "string", "const": "NONE" },
-"cl_ord_id": { "type": "string" },
-"exec_id": { "type": "string" },
-"symbol": { "type": "string" },
-"side": { "type": "string", "enum": ["buy", "sell"] },
-"qty": { "type": "integer" },
-"leaves_qty": { "type": "integer", "const": 0 },
-"cum_qty": { "type": "integer", "const": 0 },
-"avg_px": { "type": "number", "const": 0.00 },
-"reject_reason": { "type": "string" }
-},
-"required": ["sender_id", "target_id", "sending_time", "order_id", "cl_ord_id", "exec_id", "symbol", "side", "qty", "leaves_qty", "cum_qty", "avg_px", "reject_reason"]
-},
-"id": { "type": ["string", "integer"] }
-},
-"required": ["jsonrpc", "method", "params", "id"]
-}
-
-#### CLIENT Synchronous Response
-
-{
-"jsonrpc": "2.0",
-"result": {
-"status": "received"
-},
-"id": 20003
-}
+```
 
 <!-- ## 4. Order Cancellation (FIX MsgType \= F / 9\)
 
@@ -555,7 +575,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
 }
 
 {
-"$schema": "http://json-schema.org/draft-07/schema",
+"$schema": "http://json-schema.org/draft-07/schema#",
 "type": "object",
 "properties": {
 "jsonrpc": { "type": "string", "const": "2.0" },
@@ -593,7 +613,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
 }
 
 {
-"$schema": "http://json-schema.org/draft-07/schema",
+"$schema": "http://json-schema.org/draft-07/schema#",
 "type": "object",
 "properties": {
 "jsonrpc": { "type": "string", "const": "2.0" },
@@ -638,7 +658,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
 }
 
 {
-"$schema": "http://json-schema.org/draft-07/schema",
+"$schema": "http://json-schema.org/draft-07/schema#",
 "type": "object",
 "properties": {
 "jsonrpc": { "type": "string", "const": "2.0" },
@@ -698,7 +718,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
 }
 
 {
-"$schema": "http://json-schema.org/draft-07/schema",
+"$schema": "http://json-schema.org/draft-07/schema#",
 "type": "object",
 "properties": {
 "jsonrpc": { "type": "string", "const": "2.0" },
