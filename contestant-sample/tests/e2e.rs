@@ -283,7 +283,7 @@ impl Server {
             .stderr(Stdio::null())
             .spawn()
             .expect("spawn contestant-sample");
-        std::thread::sleep(Duration::from_secs(3));
+        std::thread::sleep(Duration::from_secs(5));
         Server(child)
     }
 }
@@ -445,10 +445,10 @@ async fn ws_rest_and_fill() {
     w.order_limit("AAPL", "buy", 100.50, 50, "ws-rb", "CLIENT01")
         .await;
     let (method, p) = w.recv_result().await;
-    assert_eq!(method, "order.report.added");
+    assert_eq!(method, "order.report.new");
     assert_eq!(p["cl_ord_id"], "ws-rb", "echoes cl_ord_id");
     assert_eq!(p["qty"], 50);
-    assert_eq!(p["leaves_qty"], 50, "resting leaves");
+    assert_eq!(p["price"].as_f64(), Some(100.5), "price in new response");
     assert!(
         !p["ex_ord_id"].as_str().unwrap_or("").is_empty(),
         "ex_ord_id must be present in sync response",
@@ -463,6 +463,7 @@ async fn ws_rest_and_fill() {
     assert_eq!(p["leaves_qty"], 0, "fully filled");
     assert_eq!(p["cum_qty"], 20);
     assert_eq!(p["last_shares"], 20);
+    assert_eq!(p["price"].as_f64(), Some(100.5), "price in taker fill response");
     // Async partial fill for the resting buy.
     let p = w.recv_report("order.report.partial").await;
     assert_eq!(p["cl_ord_id"], "ws-rb", "maker async cl_ord_id");
@@ -471,6 +472,7 @@ async fn ws_rest_and_fill() {
     assert_eq!(p["last_shares"], 20);
     assert_eq!(p["cum_qty"], 20);
     assert_eq!(p["leaves_qty"], 30);
+    assert_eq!(p["price"].as_f64(), Some(100.5), "price in partial notification");
 }
 
 #[tokio::test]
@@ -499,6 +501,7 @@ async fn cross_protocol() {
     let (method, p) = ws.recv_result().await;
     assert_eq!(method, "order.report.fill");
     assert_eq!(p["cl_ord_id"], "ws-cp-s");
+    assert_eq!(p["price"].as_f64(), Some(100.5), "price in taker fill response");
     assert_eq!(p["avg_px"].as_f64(), Some(100.5));
     let a = fix.recv().await;
     assert_eq!(get(&a, "35"), "8", "async ExecReport");
@@ -537,6 +540,7 @@ async fn cross_protocol() {
     assert_eq!(get(&a2, "150"), "2", "ExecType=Fill (fully filled)");
     assert_eq!(get(&a2, "32"), "60", "LastShares=60");
     assert_eq!(get(&a2, "151"), "0", "LeavesQty=0");
+    assert_eq!(get(&a2, "14"), "100", "CumQty=100");
     assert_eq!(get(&a2, "6"), "100.50", "AvgPx=100.50");
 }
 
@@ -623,14 +627,16 @@ async fn ws_multi_symbol() {
     w.order_limit("AAPL", "buy", 100.50, 50, "aapl-b", "CLIENT01")
         .await;
     let (method, p) = w.recv_result().await;
-    assert_eq!(method, "order.report.added");
+    assert_eq!(method, "order.report.new");
     assert_eq!(p["cl_ord_id"], "aapl-b");
+    assert_eq!(p["price"].as_f64(), Some(100.5));
     // Buy MSFT at a different price — proves it creates a separate book.
     w.order_limit("MSFT", "buy", 99.50, 30, "msft-b", "CLIENT01")
         .await;
     let (method, p) = w.recv_result().await;
-    assert_eq!(method, "order.report.added");
+    assert_eq!(method, "order.report.new");
     assert_eq!(p["cl_ord_id"], "msft-b");
+    assert_eq!(p["price"].as_f64(), Some(99.5));
     // Sell MSFT at 99.50 — matches MSFT buy. Taker gets sync fill.
     w.order_limit("MSFT", "sell", 99.50, 30, "msft-s", "CLIENT01")
         .await;
@@ -752,8 +758,9 @@ async fn parity_ws_rest_fill_fix() {
     ws.order_limit("MSFT", "buy", 100.50, 100, "ws-msft-b", "CLIENT01")
         .await;
     let (method, p) = ws.recv_result().await;
-    assert_eq!(method, "order.report.added");
+    assert_eq!(method, "order.report.new");
     assert_eq!(p["cl_ord_id"], "ws-msft-b");
+    assert_eq!(p["price"].as_f64(), Some(100.5));
     fix.send("A", &[("98", "0"), ("108", "30")]).await;
     let _ = fix.recv().await;
     // FIX Sells 30 MSFT @ 100.50 against the WS-resting buy.
@@ -781,6 +788,7 @@ async fn parity_ws_rest_fill_fix() {
     assert_eq!(p["last_shares"], 30);
     assert_eq!(p["cum_qty"], 30);
     assert_eq!(p["leaves_qty"], 70);
+    assert_eq!(p["price"].as_f64(), Some(100.5));
 }
 
 #[tokio::test]
@@ -811,7 +819,7 @@ async fn parity_ws_negative_price_rejected() {
     );
 }
 #[tokio::test]
-async fn parity_ws_invalid_ord_type_rejected() {
+async fn parity_ws_unknown_method_rejected() {
     let _srv = Server::start();
     let mut w = WsCli::connect().await;
     // Sending a method that is not a recognised order method triggers the
@@ -959,6 +967,8 @@ async fn fix_dynamic_session_multiplex() {
     assert_eq!(get(&r2_fill, "39"), "2"); // OrdStatus=Fill
     assert_eq!(get(&r2_fill, "38"), "10");
     assert_eq!(get(&r2_fill, "14"), "10"); // CumQty
+    assert_eq!(get(&r2_fill, "6"), "100.00", "AvgPx");
+    assert_eq!(get(&r2_fill, "151"), "0", "LeavesQty=0");
 
     // Client 1 gets async fill (maker)
     let r1_fill = c1.recv().await;
@@ -969,5 +979,116 @@ async fn fix_dynamic_session_multiplex() {
     assert_eq!(get(&r1_fill, "39"), "2"); // OrdStatus=Fill
     assert_eq!(get(&r1_fill, "38"), "10");
     assert_eq!(get(&r1_fill, "14"), "10"); // CumQty
+    assert_eq!(get(&r1_fill, "6"), "100.00", "AvgPx");
+    assert_eq!(get(&r1_fill, "151"), "0", "LeavesQty=0");
 }
 
+#[tokio::test]
+async fn ws_independent_clients() {
+    let _srv = Server::start();
+    let mut w1 = WsCli::connect().await;
+    let mut w2 = WsCli::connect().await;
+
+    // W1 rests Buy AAPL
+    w1.order_limit("AAPL", "buy", 100.00, 10, "w1-a", "CLIENT01")
+        .await;
+    let (m, p) = w1.recv_result().await;
+    assert_eq!(m, "order.report.new");
+    assert_eq!(p["cl_ord_id"], "w1-a");
+    assert_eq!(p["price"].as_f64(), Some(100.0));
+
+    // W2 rests Sell MSFT (different symbol)
+    w2.order_limit("MSFT", "sell", 50.00, 20, "w2-m", "CLIENT02")
+        .await;
+    let (m, p) = w2.recv_result().await;
+    assert_eq!(m, "order.report.new");
+    assert_eq!(p["cl_ord_id"], "w2-m");
+    assert_eq!(p["price"].as_f64(), Some(50.0));
+
+    // W2 fills its own MSFT sell by buying MSFT
+    w2.order_limit("MSFT", "buy", 50.00, 20, "w2-m2", "CLIENT02")
+        .await;
+    let (m, p) = w2.recv_result().await;
+    assert_eq!(m, "order.report.fill");
+    assert_eq!(p["cl_ord_id"], "w2-m2");
+
+    // W2 gets async fill for its resting sell
+    let p = w2.recv_report("order.report.fill").await;
+    assert_eq!(p["cl_ord_id"], "w2-m");
+    assert_eq!(p["cum_qty"], 20);
+    assert_eq!(p["leaves_qty"], 0);
+    assert_eq!(p["price"].as_f64(), Some(50.0));
+
+    // W1 should NOT have received any MSFT fill notifications
+    let has_msg = tokio::time::timeout(Duration::from_millis(200), w1.recv()).await;
+    assert!(has_msg.is_err(), "W1 should not receive MSFT fills");
+}
+
+#[tokio::test]
+async fn fix_fill_then_fill_remaining() {
+    let _srv = Server::start();
+    let mut c = FixCli::connect().await;
+    c.send("A", &[("98", "0"), ("108", "30")]).await;
+    let _ = c.recv().await;
+
+    // Rest Buy 100 @ 100.50
+    c.send(
+        "D",
+        &[
+            ("11", "r1"),
+            ("54", "1"),
+            ("55", "AAPL"),
+            ("38", "100"),
+            ("40", "2"),
+            ("44", "100.50"),
+        ],
+    )
+    .await;
+    let _ = c.recv().await;
+
+    // Fill 30 — taker gets sync Fill, maker gets async Partial
+    c.send(
+        "D",
+        &[
+            ("11", "t1"),
+            ("54", "2"),
+            ("55", "AAPL"),
+            ("38", "30"),
+            ("40", "2"),
+            ("44", "100.50"),
+        ],
+    )
+    .await;
+    let r = c.recv().await;
+    assert_eq!(get(&r, "35"), "8");
+    assert_eq!(get(&r, "150"), "2"); // taker Fill
+    assert_eq!(get(&r, "32"), "30");
+    let ma = c.recv().await;
+    assert_eq!(get(&ma, "35"), "8");
+    assert_eq!(get(&ma, "150"), "1"); // maker PartialFill
+    assert_eq!(get(&ma, "14"), "30"); // CumQty=30
+    assert_eq!(get(&ma, "151"), "70"); // LeavesQty=70
+
+    // Fill remaining 70 — taker gets sync Fill, maker gets async Fill
+    c.send(
+        "D",
+        &[
+            ("11", "t2"),
+            ("54", "2"),
+            ("55", "AAPL"),
+            ("38", "70"),
+            ("40", "2"),
+            ("44", "100.50"),
+        ],
+    )
+    .await;
+    let r = c.recv().await;
+    assert_eq!(get(&r, "35"), "8");
+    assert_eq!(get(&r, "150"), "2");
+    assert_eq!(get(&r, "32"), "70");
+    let ma2 = c.recv().await;
+    assert_eq!(get(&ma2, "35"), "8");
+    assert_eq!(get(&ma2, "150"), "2"); // maker Fill (fully filled)
+    assert_eq!(get(&ma2, "14"), "100"); // CumQty=100 <-- KEY ASSERTION
+    assert_eq!(get(&ma2, "151"), "0"); // LeavesQty=0
+}
