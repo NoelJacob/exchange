@@ -155,7 +155,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
   "params": {
     "sender_id": "CLIENT01",
     "target_id": "XCANG3",
-    "transact_time": "2026-06-04T14:34:00.000Z",
+    "sending_time": "2026-06-04T14:34:00.000Z",
     "cl_ord_id": "CL_ORD_03",
     "symbol": "AAPL",
     "side": "buy",
@@ -178,7 +178,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
       "properties": {
         "sender_id": { "type": "string" },
         "target_id": { "type": "string", "const": "XCANG3" },
-        "transact_time": { "type": "string", "format": "date-time" },
+        "sending_time": { "type": "string", "format": "date-time" },
         "cl_ord_id": { "type": "string" },
         "symbol": { "type": "string" },
         "side": { "type": "string", "enum": ["buy", "sell"] },
@@ -188,7 +188,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
       "required": [
         "sender_id",
         "target_id",
-        "transact_time",
+        "sending_time",
         "cl_ord_id",
         "symbol",
         "side",
@@ -527,7 +527,7 @@ They only have filled or rejected responses.
   "params": {
     "sender_id": "CLIENT01",
     "target_id": "XCANG3",
-    "transact_time": "2026-06-04T14:33:05.000Z",
+    "sending_time": "2026-06-04T14:33:05.000Z",
     "cl_ord_id": "CL_ORD_03",
     "symbol": "AAPL",
     "side": "sell",
@@ -549,7 +549,7 @@ They only have filled or rejected responses.
       "properties": {
         "sender_id": { "type": "string" },
         "target_id": { "type": "string", "const": "XCANG3" },
-        "transact_time": { "type": "string", "format": "date-time" },
+        "sending_time": { "type": "string", "format": "date-time" },
         "cl_ord_id": { "type": "string" },
         "symbol": { "type": "string" },
         "side": { "type": "string", "enum": ["buy", "sell"] },
@@ -558,7 +558,7 @@ They only have filled or rejected responses.
       "required": [
         "sender_id",
         "target_id",
-        "transact_time",
+        "sending_time",
         "cl_ord_id",
         "symbol",
         "side",
