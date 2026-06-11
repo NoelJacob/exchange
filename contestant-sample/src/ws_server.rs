@@ -91,7 +91,7 @@ impl ParsedParams {
     fn is_market(&self) -> bool {
         matches!(self, ParsedParams::Market(_))
     }
-    fn price_cents(&self) -> f64 {
+    fn price(&self) -> f64 {
         match self {
             ParsedParams::Limit(p) => p.price,
             ParsedParams::Market(_) => 0.0,
@@ -146,9 +146,7 @@ pub fn report_to_json(report: &crate::ExecutionReport) -> serde_json::Value {
             let last_shares = report.last_shares.expect("[WS] Missing last_shares");
             let last_px = report.last_px.expect("[WS] Missing last_px");
 
-            serde_json::json!({
-                "method": format!("order.report.{}", method),
-                "params": {
+            let mut params = serde_json::json!({
                     "sender_id": "XCANG3",
                     "target_id": report.target_id,
                     "transact_time": transact_time,
@@ -163,16 +161,20 @@ pub fn report_to_json(report: &crate::ExecutionReport) -> serde_json::Value {
                     "last_shares": last_shares,
                     "last_px": last_px,
                     "avg_px": report.avg_px
-                }
+            });
+            if !report.is_market {
+                params.as_object_mut().expect("[WS] Params missing").insert("price".to_string(), serde_json::json!(report.price));
+            }
+            serde_json::json!({
+                "method": format!("order.report.{}", method),
+                "params": params
             })
         }
 
         ExecutionReportMethod::New => {
             let ex_ord_id = report.ex_ord_id.clone().expect("[WS] Missing ex_order_id");
 
-            serde_json::json!({
-                "method": format!("order.report.new"),
-                "params": {
+            let mut params = serde_json::json!({
                     "sender_id": "XCANG3",
                     "target_id": report.target_id,
                     "transact_time": transact_time,
@@ -182,7 +184,13 @@ pub fn report_to_json(report: &crate::ExecutionReport) -> serde_json::Value {
                     "symbol": report.symbol,
                     "side": side,
                     "qty": report.qty
-                }
+            });
+            if !report.is_market {
+                params.as_object_mut().expect("[WS] Params missing").insert("price".to_string(), serde_json::json!(report.price));
+            }
+            serde_json::json!({
+                "method": format!("order.report.new"),
+                "params": params
             })
         }
 
@@ -190,9 +198,7 @@ pub fn report_to_json(report: &crate::ExecutionReport) -> serde_json::Value {
             let ex_ord_id = report.ex_ord_id.clone().unwrap_or("NONE".to_string());
             let reject_reason = report.reject_reason.clone().expect("[WS] Missing reject_reason");
 
-            serde_json::json!({
-                "method": format!("order.report.{}", "rejected"),
-                "params": {
+            let mut params = serde_json::json!({
                     "sender_id": "XCANG3",
                     "target_id": report.target_id,
                     "transact_time": transact_time,
@@ -203,7 +209,13 @@ pub fn report_to_json(report: &crate::ExecutionReport) -> serde_json::Value {
                     "side": side,
                     "qty": report.qty,
                     "reject_reason": reject_reason
-                }
+            });
+            if !report.is_market {
+                params.as_object_mut().expect("[WS] Params missing").insert("price".to_string(), serde_json::json!(report.price));
+            }
+            serde_json::json!({
+                "method": format!("order.report.{}", "rejected"),
+                "params": params
             })
         }
     }
@@ -349,7 +361,7 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
         };
 
         let is_market = parsed.is_market();
-        let price_f64 = parsed.price_cents();
+        let price_f64 = parsed.price();
         let qty = parsed.qty();
         if qty == 0 {
             send_error(

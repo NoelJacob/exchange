@@ -219,6 +219,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
       "symbol": "AAPL",
       "side": "buy",
       "qty": 100,
+      "price": 150.25
     }
   },
   "id": 10003
@@ -247,8 +248,20 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
             "symbol": { "type": "string" },
             "side": { "type": "string", "enum": ["buy", "sell"] },
             "qty": { "type": "integer" },
+            "price": { "type": "number", "minimum": 0.0001 },
           },
-          "required": ["cl_ord_id", "transact_time"]
+          "required": [
+            "sender_id",
+            "target_id",
+            "ex_ord_id",
+            "exec_id",
+            "symbol",
+            "side",
+            "qty",
+            "cl_ord_id",
+            "transact_time",
+            "price",
+          ]
         }
       },
       "required": ["method", "params"]
@@ -280,7 +293,8 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
       "cum_qty": 100,
       "last_shares": 60,
       "last_px": 150.25,
-      "avg_px": 150.25
+      "avg_px": 150.25,
+      "price": 150.25,
     }
   },
   "id": 10003
@@ -313,7 +327,8 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
             "cum_qty": { "type": "integer" },
             "last_shares": { "type": "integer" },
             "last_px": { "type": "number" },
-            "avg_px": { "type": "number" }
+            "avg_px": { "type": "number" },
+            "price": { "type": "number", "minimum": 0.0001 },
           },
           "required": [
             "sender_id",
@@ -329,7 +344,8 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
             "cum_qty",
             "last_shares",
             "last_px",
-            "avg_px"
+            "avg_px",
+            "price",
           ]
         }
       },
@@ -362,7 +378,8 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
       "cum_qty": 40,
       "last_shares": 40,
       "last_px": 150.25,
-      "avg_px": 150.25
+      "avg_px": 150.25,
+      "price": 150.25,
     }
   },
   "id": 10003
@@ -395,7 +412,8 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
             "cum_qty": { "type": "integer" },
             "last_shares": { "type": "integer" },
             "last_px": { "type": "number" },
-            "avg_px": { "type": "number" }
+            "avg_px": { "type": "number" },
+            "price": { "type": "number", "minimum": 0.0001 },
           },
           "required": [
             "sender_id",
@@ -411,7 +429,8 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
             "cum_qty",
             "last_shares",
             "last_px",
-            "avg_px"
+            "avg_px",
+            "price",
           ]
         }
       },
@@ -440,7 +459,8 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
       "symbol": "AAPL",
       "side": "sell",
       "qty": 100,
-      "reject_reason": "Insufficient margin balance"
+      "reject_reason": "Insufficient margin balance",
+      "price": 150.25,
     }
   },
   "id": 10003
@@ -469,7 +489,8 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
             "symbol": { "type": "string" },
             "side": { "type": "string", "enum": ["buy", "sell"] },
             "qty": { "type": "integer" },
-            "reject_reason": { "type": "string" }
+            "reject_reason": { "type": "string" },
+            "price": { "type": "number", "minimum": 0.0001 }
           },
           "required": [
             "sender_id",
@@ -481,7 +502,8 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
             "symbol",
             "side",
             "qty",
-            "reject_reason"
+            "reject_reason",
+            "price",
           ]
         }
       },
@@ -494,6 +516,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
 ```
 
 ### 2.2 Market Order Placement (order.create.market)
+They only have filled or rejected responses.
 
 #### CLIENT Request
 
@@ -727,7 +750,8 @@ Once the gateway routes orders to the core matching engine, downstream execution
     "cum_qty": 40,
     "last_shares": 40,
     "last_px": 150.25,
-    "avg_px": 150.25
+    "avg_px": 150.25,
+    "price": 150.25,
   }
 }
 ```
@@ -755,7 +779,8 @@ Once the gateway routes orders to the core matching engine, downstream execution
         "cum_qty": { "type": "integer" },
         "last_shares": { "type": "integer" },
         "last_px": { "type": "number" },
-        "avg_px": { "type": "number" }
+        "avg_px": { "type": "number" },
+        "price": { "type": "number", "minimum": 0.0001 },
       },
       "required": [
         "sender_id",
@@ -771,7 +796,8 @@ Once the gateway routes orders to the core matching engine, downstream execution
         "cum_qty",
         "last_shares",
         "last_px",
-        "avg_px"
+        "avg_px",
+        "price"
       ]
     }
   },
@@ -801,7 +827,8 @@ Once the gateway routes orders to the core matching engine, downstream execution
     "cum_qty": 100,
     "last_shares": 60,
     "last_px": 150.25,
-    "avg_px": 150.25
+    "avg_px": 150.25,
+    "price": 150.25
   }
 }
 ```
@@ -829,7 +856,8 @@ Once the gateway routes orders to the core matching engine, downstream execution
         "cum_qty": { "type": "integer" },
         "last_shares": { "type": "integer" },
         "last_px": { "type": "number" },
-        "avg_px": { "type": "number" }
+        "avg_px": { "type": "number" },
+        "price": { "type": "number", "minimum": 0.0001 },
       },
       "required": [
         "sender_id",
@@ -845,7 +873,8 @@ Once the gateway routes orders to the core matching engine, downstream execution
         "cum_qty",
         "last_shares",
         "last_px",
-        "avg_px"
+        "avg_px",
+        "price",
       ]
     }
   },
@@ -871,7 +900,8 @@ Once the gateway routes orders to the core matching engine, downstream execution
     "symbol": "AAPL",
     "side": "sell",
     "qty": 100,
-    "reject_reason": "Insufficient margin balance"
+    "reject_reason": "Insufficient margin balance",
+    "price": 150.25,
   }
 }
 ```
@@ -895,7 +925,8 @@ Once the gateway routes orders to the core matching engine, downstream execution
         "symbol": { "type": "string" },
         "side": { "type": "string", "enum": ["buy", "sell"] },
         "qty": { "type": "integer" },
-        "reject_reason": { "type": "string" }
+        "reject_reason": { "type": "string" },
+        "price": { "type": "number", "minimum": 0.0001 },
       },
       "required": [
         "sender_id",
@@ -907,7 +938,8 @@ Once the gateway routes orders to the core matching engine, downstream execution
         "symbol",
         "side",
         "qty",
-        "reject_reason"
+        "reject_reason",
+        "price",
       ]
     }
   },
