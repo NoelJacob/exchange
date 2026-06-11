@@ -1,5 +1,6 @@
 mod fix_server;
 mod ws_server;
+use chrono::prelude::*;
 use orderbook_rs::{OrderBook, TimeInForce};
 use sha2::{Digest, Sha256};
 
@@ -11,6 +12,7 @@ use std::fmt;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use chrono::Utc;
 
 // ── types used by fix_server and ws_server ───────────────────────────
 
@@ -18,7 +20,6 @@ use tokio::sync::mpsc;
 /// fill notifications back to the correct connection.
 #[derive(Clone)]
 pub struct OrderInfo {
-    pub user_id: String,
     /// Target (recipient) identifier for async notifications — the original
     /// `sender_id` from the request (FIX `TargetCompID` / WS `target_id`).
     /// For omnibus, this is the user the response should route back to.
@@ -26,8 +27,10 @@ pub struct OrderInfo {
     pub cl_ord_id: String,
     pub order_qty: u64,
     pub cum_value_cents: u128,
+    pub cum_qty: u64,
     pub ex_ord_id: String,
     pub connection_kind: ConnectionKind,
+    pub price: f64
 }
 
 #[derive(Clone)]
@@ -61,78 +64,14 @@ pub fn hash_user_id(user_id: &str) -> Hash32 {
     bytes.copy_from_slice(&result[..32]);
     Hash32::new(bytes)
 }
-/// Break a UNIX timestamp (duration since epoch) into calendar components.
-fn unix_ms_to_parts(now: &std::time::Duration) -> (i64, usize, i64, u64, u64, u64, u64) {
-    let s = now.as_secs();
-    let ms = now.subsec_millis();
-    let days = s / 86400;
-    let time_secs = s % 86400;
-    let h = time_secs / 3600;
-    let m = (time_secs % 3600) / 60;
-    let sec = time_secs % 60;
-    let mut y = 1970i64;
-    let mut d = days as i64;
-    loop {
-        let days_in_year = if is_leap(y) { 366 } else { 365 };
-        if d < days_in_year {
-            break;
-        }
-        d -= days_in_year;
-        y += 1;
-    }
-    let month_days = if is_leap(y) {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-    let mut mo = 1usize;
-    for &md in &month_days {
-        if d < md {
-            break;
-        }
-        d -= md;
-        mo += 1;
-    }
-    (y, mo, d + 1, h, m, sec, ms as u64)
-}
-
-/// Current time formatted as `YYYYMMDD-HH:MM:SS` for FIX Tag 60.
-pub fn tag60_now() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap();
-    let (y, mo, d, h, m, s, _ms) = unix_ms_to_parts(&now);
-    format!("{:04}{:02}{:02}-{:02}:{:02}:{:02}", y, mo, d, h, m, s)
-}
-
-/// Current time formatted as ISO 8601 with millisecond precision
-/// (`YYYY-MM-DDTHH:MM:SS.sssZ`) for the WS `sending_time` field.
-pub fn tag60_iso8601_now() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap();
-    let (y, mo, d, h, m, s, ms) = unix_ms_to_parts(&now);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-        y, mo, d, h, m, s, ms
-    )
-}
-
-fn is_leap(y: i64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
-}
 
 /// Look up the orderbook for `symbol`, lazily creating one with a
 pub fn get_or_create_book(
     books: &mut HashMap<String, Arc<OrderBook<()>>>,
     symbol: &str,
     trade_tx: &mpsc::UnboundedSender<orderbook_rs::orderbook::trade::TradeResult>,
-) -> Option<Arc<OrderBook<()>>> {
-    let symbol = symbol.trim();
-    if symbol.is_empty() {
-        return None;
-    }
-    Some(Arc::clone(
+) -> Arc<OrderBook<()>> {
+    Arc::clone(
         books
             .entry(symbol.to_string())
             .or_insert_with(|| {
@@ -144,7 +83,7 @@ pub fn get_or_create_book(
                 );
                 Arc::new(OrderBook::with_trade_listener(symbol, listener))
             }),
-    ))
+    )
 }
 
 // ── existing submit infrastructure ───────────────────────────────────
@@ -160,13 +99,6 @@ pub struct SubmitOutcome {
     /// For limit orders, quantity left to rest on the book (0 if fully
     /// filled). Always 0 for market orders.
     pub resting_qty: u64,
-    /// Echo of the limit price in cents, for the resting order. 0 for
-    /// market orders.
-    pub limit_price_cents: u128,
-    /// Exchange-assigned order ID, stable across all reports for this order.
-    pub ex_ord_id: String,
-    /// Execution report ID for this specific execution (unique per report).
-    pub exec_id: String,
     /// Quantity filled in the last (or only) match.
     pub last_shares: u64,
     /// Fill price of the last (or only) match in integer cents.
@@ -264,14 +196,12 @@ pub fn submit(
     book: &OrderBook<()>,
     is_market: bool,
     side: Side,
-    qty: u64,
-    limit_price_cents: u128,
-    user_hash: Hash32,
     pending: &mut HashMap<Id, OrderInfo>,
-    mut info: OrderInfo,
-    order_id_seq: &AtomicU64,
-    exec_id_seq: &AtomicU64,
+    info: &OrderInfo,
 ) -> Result<SubmitOutcome, SubmitError> {
+    let user_hash = crate::hash_user_id(&info.target_id);
+    let limit_price_cents = (info.price * 100.0).round() as u128;
+    let qty = info.order_qty;
     let taker_id = Id::new();
     let result: MatchResult = if is_market {
         book.submit_market_order_with_user(taker_id, qty, side, user_hash)
@@ -302,18 +232,21 @@ pub fn submit(
         qty.saturating_sub(filled_qty)
     };
     let cum_qty = filled_qty;
-    let last_shares = filled_qty;
-    let last_px_cents = avg_price_cents;
-    let ex_ord_id = order_id_seq
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        .to_string();
-    let exec_id = exec_id_seq
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        .to_string();
+    let last_shares = result
+        .trades()
+        .as_vec()
+        .last()
+        .map(|t| t.quantity().as_u64())
+        .unwrap_or(0);
+    let last_px_cents = result
+       .trades()
+       .as_vec()
+       .last()
+       .map(|t| t.price().as_u128())
+       .unwrap_or(0);
 
     if !is_market && resting_qty > 0 {
         let rest_id = Id::new();
-        info.ex_ord_id = ex_ord_id.clone();
         book.add_limit_order_with_user(
             rest_id,
             limit_price_cents,
@@ -324,7 +257,7 @@ pub fn submit(
             None::<()>,
         )
         .map_err(|e| SubmitError::PriceLevel(format!("resting add failed: {e}")))?;
-        pending.insert(rest_id, info);
+        pending.insert(rest_id, info.clone());
     }
     // Taker's info is intentionally NOT inserted into `pending` — the
     // WS handler emits the taker's async fill notification synchronously
@@ -334,9 +267,6 @@ pub fn submit(
         filled_qty,
         avg_price_cents,
         resting_qty,
-        limit_price_cents,
-        ex_ord_id,
-        exec_id,
         last_shares,
         last_px_cents,
         cum_qty,
@@ -344,172 +274,106 @@ pub fn submit(
     })
 }
 // ── ExecutionReport: shared structured type for WS + FIX responses ────
+pub enum ExecutionReportMethod { New, Fill, Partial, Rejected }
 
 /// Structured execution report shared by the WS and FIX response builders.
 /// Created by [`build_execution_report`] (success) or manually for
 /// fill notifications / rejects.
 pub struct ExecutionReport {
-    /// "added" | "fill" | "partial" | "rejected"
-    pub method: &'static str,
-    pub ex_ord_id: String,
+    /// "New" | "Fill" | "Partial" | "Rejected"
+    pub method: ExecutionReportMethod,
+    pub target_id: String,
+    pub transact_time: DateTime<Utc>,
+    // "NONE" for rejected
+    pub ex_ord_id: Option<String>,
+    pub cl_ord_id: String,
     pub exec_id: String,
     pub symbol: String,
-    /// "buy" or "sell"
-    pub side: String,
+    pub side: Side,
     pub qty: u64,
     pub leaves_qty: u64,
     pub cum_qty: u64,
-    pub last_shares: u64,
-    pub last_px: f64,
+    // None for rejected
+    pub last_shares: Option<u64>,
+    // None for rejected
+    pub last_px: Option<f64>,
     pub avg_px: f64,
-    pub cl_ord_id: String,
-    /// Original client that placed the order (for routing the response back).
-    pub target_id: String,
+    // Some for rejected
     pub reject_reason: Option<String>,
-    pub sending_time: String,
+    pub is_market: bool,
+    pub price: f64
 }
+
 pub fn build_execution_report(
-    outcome: &SubmitOutcome,
+    outcome: SubmitOutcome,
     info: &OrderInfo,
     symbol: &str,
     side: Side,
-    order_qty: u64,
+    exec_id: String,
+    is_market: bool,
 ) -> ExecutionReport {
     let filled = outcome.filled_qty > 0;
     let fully_filled = outcome.leaves_qty == 0 && filled;
     let method = if !filled {
-        "added"
+        ExecutionReportMethod::New
     } else if fully_filled {
-        "fill"
+        ExecutionReportMethod::Fill
     } else {
-        "partial"
+        ExecutionReportMethod::Partial
     };
     let avg_px = if outcome.filled_qty > 0 {
         outcome.avg_price_cents as f64 / 100.0
     } else {
         0.0
     };
+
     ExecutionReport {
         method,
-        ex_ord_id: outcome.ex_ord_id.clone(),
-        exec_id: outcome.exec_id.clone(),
+        ex_ord_id: Some(info.ex_ord_id.clone()),
+        exec_id,
         symbol: symbol.to_string(),
-        side: match side {
-            Side::Buy => "buy".to_string(),
-            Side::Sell => "sell".to_string(),
-        },
-        qty: order_qty,
+        side,
+        qty: info.order_qty,
         leaves_qty: outcome.leaves_qty,
         cum_qty: outcome.cum_qty,
-        last_shares: outcome.last_shares,
-        last_px: outcome.last_px_cents as f64 / 100.0,
+        last_shares: Some(outcome.last_shares),
+        last_px: Some(outcome.last_px_cents as f64 / 100.0),
         avg_px,
         cl_ord_id: info.cl_ord_id.clone(),
         target_id: info.target_id.clone(),
         reject_reason: None,
-        sending_time: tag60_iso8601_now(),
+        transact_time: Utc::now(),
+        is_market,
+        price: info.price
     }
 }
 /// Build an [`ExecutionReport`] for a business-logic rejection.
 pub fn build_reject_report(
-    reason: &str,
+    reason: String,
     info: &OrderInfo,
     symbol: &str,
     side: Side,
-    order_qty: u64,
-    exec_id: &str,
+    exec_id: String,
+    is_market: bool,
 ) -> ExecutionReport {
     ExecutionReport {
-        method: "rejected",
-        ex_ord_id: "NONE".to_string(),
-        exec_id: exec_id.to_string(),
+        method: ExecutionReportMethod::Rejected,
+        ex_ord_id: Some(info.ex_ord_id.clone()),
+        exec_id,
         symbol: symbol.to_string(),
-        side: match side {
-            Side::Buy => "buy".to_string(),
-            Side::Sell => "sell".to_string(),
-        },
-        qty: order_qty,
+        side,
+        qty: info.order_qty,
         leaves_qty: 0,
         cum_qty: 0,
-        last_shares: 0,
-        last_px: 0.0,
+        last_shares: None,
+        last_px: None,
         avg_px: 0.0,
         cl_ord_id: info.cl_ord_id.clone(),
         target_id: info.target_id.clone(),
-        reject_reason: Some(reason.to_string()),
-        sending_time: tag60_iso8601_now(),
-    }
-}
-/// Build and dispatch a fill notification to the order's connection.
-/// Used by the dispatch task for both maker and taker notifications.
-#[allow(clippy::too_many_arguments)]
-fn send_fill_notification(
-    info: &OrderInfo,
-    symbol: &str,
-    side: Side,
-    order_qty: u64,
-    fill_qty: u64,
-    fill_price_cents: u128,
-    leaves: u64,
-    cum: u64,
-    cum_value_cents: u128,
-    state: &AppState,
-) {
-    let exec_id = state
-        .exec_id_seq
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        .to_string();
-    let method = if leaves == 0 { "fill" } else { "partial" };
-    let avg_px = if cum > 0 {
-        cum_value_cents as f64 / cum as f64 / 100.0
-    } else {
-        0.0
-    };
-
-    let report = ExecutionReport {
-        method,
-        ex_ord_id: info.ex_ord_id.clone(),
-        exec_id,
-        symbol: symbol.to_string(),
-        side: match side {
-            Side::Buy => "buy".to_string(),
-            Side::Sell => "sell".to_string(),
-        },
-        qty: order_qty,
-        leaves_qty: leaves,
-        cum_qty: cum,
-        last_shares: fill_qty,
-        last_px: fill_price_cents as f64 / 100.0,
-        avg_px,
-        cl_ord_id: info.cl_ord_id.clone(),
-        target_id: info.target_id.clone(),
-        reject_reason: None,
-        sending_time: tag60_iso8601_now(),
-    };
-
-    match &info.connection_kind {
-        ConnectionKind::Fix {
-            session_id,
-            reply_tx,
-        } => {
-            let mut reply = fixer::message::Message::new();
-            reply
-                .header
-                .set_string(fixer::tag::TAG_SENDER_COMP_ID, "XCANG3");
-            reply
-                .header
-                .set_string(fixer::tag::TAG_TARGET_COMP_ID, &session_id.target_comp_id);
-            fix_server::exec_report_to_fix_body(&report, &mut reply);
-            if reply_tx.send(fix_server::PendingReply {
-                msg: reply,
-                session_id: Arc::clone(session_id),
-            }).is_err() {
-                eprintln!("[FIX] Failed to send async fill notification");
-            }
-        }
-        ConnectionKind::Ws { sender } => {
-            ws_server::send_notification(sender, &report);
-        }
+        reject_reason: Some(reason),
+        transact_time: Utc::now(),
+        is_market,
+        price: info.price
     }
 }
 
@@ -537,49 +401,69 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         while let Some(result) = trade_rx.recv().await {
             for trade in result.match_result.trades().as_vec() {
                 let maker_id = trade.maker_order_id();
-                // Peek at pending info without removing — we may need it
-                // again for a subsequent partial fill.
-                let maker_info = {
-                    let pending = dispatch_state.pending.lock();
-                    pending.get(&maker_id).cloned()
-                };
-                if let Some(mut info) = maker_info {
-                    let fill_qty = trade.quantity().as_u64();
-                    let fill_price_cents = trade.price().as_u128();
-                    let side = trade.maker_side();
+                let fill_qty = trade.quantity().as_u64();
+                let fill_price_cents = trade.price().as_u128();
+                let side = trade.maker_side();
+                let (info, leaves) = {
+                    let mut pending = dispatch_state.pending.lock();
+                    let info = pending.get_mut(&maker_id).expect("[FIX] Missing OrderInfo");
                     info.cum_value_cents += fill_price_cents * fill_qty as u128;
-                    // Get leaves/cum from book if order still there.
-                    let (leaves, cum) = dispatch_state
+                    info.cum_qty += fill_qty;
+                    // Get leaves from book if order still there.
+                    let leaves = dispatch_state
                         .books
                         .lock()
                         .get(&result.symbol)
                         .and_then(|b| b.get_order(maker_id))
-                        .map(|o| (o.visible_quantity(), info.order_qty.saturating_sub(o.visible_quantity())))
-                        .unwrap_or((0, info.order_qty));
-                    // Write back cum_value_cents to pending (remove on full fill).
-                    {
-                        let mut pending = dispatch_state.pending.lock();
-                        if leaves == 0 {
+                        .map(|o| o.visible_quantity())
+                        .unwrap_or(0);
+
+                    let info2 = info.clone();
+                    if leaves == 0 {
                             pending.remove(&maker_id);
-                        } else if let Some(entry) = pending.get_mut(&maker_id) {
-                            entry.cum_value_cents = info.cum_value_cents;
-                        }
                     }
-                    send_fill_notification(
-                        &info,
-                        &result.symbol,
-                        side,
-                        info.order_qty,
-                        fill_qty,
-                        fill_price_cents,
-                        leaves,
-                        cum,
-                        info.cum_value_cents,
-                        &dispatch_state,
-                    );
+                    (info2, leaves)
+                };
+
+                let outcome = SubmitOutcome {
+                    filled_qty: fill_qty,
+                    avg_price_cents: if info.cum_qty > 0 { info.cum_value_cents / info.cum_qty as u128 } else { 0 },
+                    resting_qty: leaves,
+                    last_shares: fill_qty,
+                    last_px_cents: fill_price_cents,
+                    cum_qty: info.cum_qty,
+                    leaves_qty: leaves,
+                };
+
+                let exec_id = dispatch_state
+                .exec_id_seq
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                .to_string();
+
+                let report = crate::build_execution_report(
+                    outcome,
+                    &info,
+                    &result.symbol,
+                    side,
+                    exec_id,
+                    false,
+                );
+
+                match info.connection_kind {
+                    ConnectionKind::Fix { session_id, reply_tx } => {
+                        let resp = fix_server::report_to_fix(&report);
+                        let _ = reply_tx.send(fix_server::PendingReply {
+                            msg: resp,
+                            session_id,
+                        });
+                    },
+                    ConnectionKind::Ws { sender } => {
+                        ws_server::send_notification(&sender, &report);
+                    },
+                };
+
                 }
             }
-        }
     });
 
     let fix_state = Arc::clone(&state);

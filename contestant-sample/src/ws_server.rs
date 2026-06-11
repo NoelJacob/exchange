@@ -1,10 +1,14 @@
 use std::sync::Arc;
 
+use pricelevel::prelude::*;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
+use chrono::prelude::*;
+
+use crate::ExecutionReportMethod;
 
 // ── JSON-RPC 2.0 request envelope (per WS.md §1.1) ───────────────────
 
@@ -124,62 +128,97 @@ fn send_error(
 }
 
 /// Send a sync `result` envelope with an `ExecutionReport` as params.
-pub fn send_result(
-    ws_tx: &mpsc::UnboundedSender<String>,
-    id: &serde_json::Value,
-    report: &crate::ExecutionReport,
-) {
-    let resp = serde_json::json!({
-        "jsonrpc": "2.0",
-        "result": {
-            "method": format!("order.report.{}", report.method),
-            "params": {
-                "sender_id": "XCANG3",
-                "target_id": report.target_id,
-                "sending_time": report.sending_time,
-                "ex_ord_id": report.ex_ord_id,
-                "cl_ord_id": report.cl_ord_id,
-                "exec_id": report.exec_id,
-                "symbol": report.symbol,
-                "side": report.side,
-                "qty": report.qty,
-                "leaves_qty": report.leaves_qty,
-                "cum_qty": report.cum_qty,
-                "last_shares": report.last_shares,
-                "last_px": report.last_px,
-                "avg_px": report.avg_px,
-                "reject_reason": report.reject_reason,
-            },
-        },
-        "id": id,
-    });
-    let _ = ws_tx.send(resp.to_string());
+pub fn report_to_json(report: &crate::ExecutionReport) -> serde_json::Value {
+    let side = match report.side {
+        Side::Buy => "buy",
+        Side::Sell => "sell"
+    };
+    let transact_time = report.transact_time.to_rfc3339_opts(SecondsFormat::Micros, true);
+
+    match report.method {
+        ExecutionReportMethod::Fill | ExecutionReportMethod::Partial => {
+            let method = match report.method {
+                ExecutionReportMethod::Fill => "fill",
+                ExecutionReportMethod::Partial => "partial",
+                _ => unreachable!()
+            };
+            let ex_ord_id = report.ex_ord_id.clone().expect("[WS] Missing ex_order_id");
+            let last_shares = report.last_shares.expect("[WS] Missing last_shares");
+            let last_px = report.last_px.expect("[WS] Missing last_px");
+
+            serde_json::json!({
+                "method": format!("order.report.{}", method),
+                "params": {
+                    "sender_id": "XCANG3",
+                    "target_id": report.target_id,
+                    "transact_time": transact_time,
+                    "ex_ord_id": ex_ord_id,
+                    "cl_ord_id": report.cl_ord_id,
+                    "exec_id": report.exec_id,
+                    "symbol": report.symbol,
+                    "side": side,
+                    "qty": report.qty,
+                    "leaves_qty": report.leaves_qty,
+                    "cum_qty": report.cum_qty,
+                    "last_shares": last_shares,
+                    "last_px": last_px,
+                    "avg_px": report.avg_px
+                }
+            })
+        }
+
+        ExecutionReportMethod::New => {
+            let ex_ord_id = report.ex_ord_id.clone().expect("[WS] Missing ex_order_id");
+
+            serde_json::json!({
+                "method": format!("order.report.new"),
+                "params": {
+                    "sender_id": "XCANG3",
+                    "target_id": report.target_id,
+                    "transact_time": transact_time,
+                    "ex_ord_id": ex_ord_id,
+                    "cl_ord_id": report.cl_ord_id,
+                    "exec_id": report.exec_id,
+                    "symbol": report.symbol,
+                    "side": side,
+                    "qty": report.qty
+                }
+            })
+        }
+
+        ExecutionReportMethod::Rejected => {
+            let ex_ord_id = report.ex_ord_id.clone().unwrap_or("NONE".to_string());
+            let reject_reason = report.reject_reason.clone().expect("[WS] Missing reject_reason");
+
+            serde_json::json!({
+                "method": format!("order.report.{}", "rejected"),
+                "params": {
+                    "sender_id": "XCANG3",
+                    "target_id": report.target_id,
+                    "transact_time": transact_time,
+                    "ex_ord_id": ex_ord_id,
+                    "cl_ord_id": report.cl_ord_id,
+                    "exec_id": report.exec_id,
+                    "symbol": report.symbol,
+                    "side": side,
+                    "qty": report.qty,
+                    "reject_reason": reject_reason
+                }
+            })
+        }
+    }
 }
 
 /// Send a server-initiated notification with an `ExecutionReport` as params.
 /// No `id` field — per WS.md §3.
 pub fn send_notification(ws_tx: &mpsc::UnboundedSender<String>, report: &crate::ExecutionReport) {
+    let val = report_to_json(report);
     let resp = serde_json::json!({
         "jsonrpc": "2.0",
-        "method": format!("order.report.{}", report.method),
-        "params": {
-                "sender_id": "XCANG3",
-                "target_id": report.target_id,
-            "sending_time": report.sending_time,
-            "ex_ord_id": report.ex_ord_id,
-            "cl_ord_id": report.cl_ord_id,
-            "exec_id": report.exec_id,
-            "symbol": report.symbol,
-            "side": report.side,
-            "qty": report.qty,
-            "leaves_qty": report.leaves_qty,
-            "cum_qty": report.cum_qty,
-            "last_shares": report.last_shares,
-            "last_px": report.last_px,
-            "avg_px": report.avg_px,
-            "reject_reason": report.reject_reason,
-        },
+        "method": val.get("method"),
+        "params": val.get("params")
     });
+
     let _ = ws_tx.send(resp.to_string());
 }
 
@@ -283,7 +322,13 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
         let parsed = match parse_params(&req.method, &req.params) {
             Ok(p) => p,
             Err(e) => {
-                send_error(&ws_tx, &req.id, -32602, "Invalid params", &e);
+                send_error(
+                    &ws_tx,
+                    &req.id,
+                    -32602,
+                    "Invalid params",
+                    &e
+                );
                 continue;
             }
         };
@@ -292,7 +337,13 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
         let ob_side = match side_to_book(parsed.side_str()) {
             Ok(s) => s,
             Err(e) => {
-                send_error(&ws_tx, &req.id, -32602, "Invalid params", &e);
+                send_error(
+                    &ws_tx,
+                    &req.id,
+                    -32602,
+                    "Invalid params",
+                    &e
+                );
                 continue;
             }
         };
@@ -301,7 +352,13 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
         let price_f64 = parsed.price_cents();
         let qty = parsed.qty();
         if qty == 0 {
-            send_error(&ws_tx, &req.id, -32602, "Invalid params", "non-positive quantity");
+            send_error(
+                &ws_tx,
+                &req.id,
+                -32602,
+                "Invalid params",
+                "non-positive quantity"
+            );
             continue;
         }
 
@@ -317,13 +374,17 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
             continue;
         }
 
-        let price_cents: u128 = if is_market {
-            0
-        } else {
-            (price_f64 * 100.0).round() as u128
-        };
-
-        let user_hash = crate::hash_user_id(parsed.sender_id());
+        let symbol = parsed.symbol().trim();
+        if symbol.is_empty() {
+                send_error(
+                    &ws_tx,
+                    &req.id,
+                    -32602,
+                    "Invalid params",
+                    "missing/empty symbol",
+                );
+                continue;
+        }
 
         eprintln!(
             "[WS] Order cl_ord_id={} sender={} symbol={} side={} price={} qty={} method={}",
@@ -343,86 +404,77 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
         let book = {
             let mut books = state.books.lock();
             crate::get_or_create_book(&mut books, parsed.symbol(), &state.trade_tx)
-                .map(|b| Arc::clone(&b))
         };
-        let book = match book {
-            Some(b) => b,
-            None => {
-                send_error(
-                    &ws_tx,
-                    &req.id,
-                    -32602,
-                    "Invalid params",
-                    "missing/empty symbol",
-                );
-                continue;
-            }
-        };
+
+        let ex_ord_id = state.order_id_seq
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .to_string();
         // 5. Build OrderInfo with target_id for omnibus routing.
         let info = crate::OrderInfo {
-            user_id: parsed.sender_id().to_string(),
             target_id: parsed.sender_id().to_string(),
             cl_ord_id: parsed.cl_ord_id().to_string(),
             order_qty: parsed.qty(),
             cum_value_cents: 0,
-            ex_ord_id: String::new(),
+            cum_qty: 0,
+            ex_ord_id,
             connection_kind: crate::ConnectionKind::Ws {
                 sender: ws_tx.clone(),
             },
+            price: price_f64
         };
-        // 6. Submit the order. Clone info first since submit() moves it.
-        let info_for_report = crate::OrderInfo {
-            ex_ord_id: String::new(),
-            ..info.clone()
-        };
+
         let outcome = {
             let mut pending = state.pending.lock();
             crate::submit(
                 &book,
                 is_market,
                 ob_side,
-                parsed.qty(),
-                price_cents,
-                user_hash,
                 &mut pending,
-                info,
-                &state.order_id_seq,
-                &state.exec_id_seq,
+                &info
             )
         };
-        match outcome {
+        let exec_id = state
+        .exec_id_seq
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .to_string();
+
+        let report = match outcome {
             Ok(o) => {
-                let report = crate::build_execution_report(
-                    &o,
-                    &info_for_report,
+                crate::build_execution_report(
+                    o,
+                    &info,
                     parsed.symbol(),
                     ob_side,
-                    parsed.qty(),
-                );
-                send_result(&ws_tx, &req.id, &report);
+                    exec_id,
+                    is_market
+                )
             }
             Err(e) => {
                 eprintln!("[WS] Order {} rejected: {e}", parsed.cl_ord_id());
-                let exec_id = state
-                    .exec_id_seq
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                    .to_string();
-                let report = crate::build_reject_report(
-                    &e.to_string(),
-                    &info_for_report,
+                crate::build_reject_report(
+                    e.to_string(),
+                    &info,
                     parsed.symbol(),
                     ob_side,
-                    parsed.qty(),
-                    &exec_id,
-                );
-                send_result(&ws_tx, &req.id, &report);
+                    exec_id,
+                    is_market
+                )
             }
-        }
+        };
+        let val = report_to_json(&report);
+
+        let resp = serde_json::json!({
+            "jsonrpc": "2.0",
+            "result" : val,
+            "id": req.id
+        });
+
+        let _ = ws_tx.send(resp.to_string());
     }
 
     eprintln!("[WS] Client disconnected");
     // Dropping ws_tx will cause the writer task to exit.
-    write_handle.await.ok();
+    let _ = write_handle.await;
 }
 
 pub async fn run(state: Arc<crate::AppState>) -> Result<(), Box<dyn std::error::Error>> {

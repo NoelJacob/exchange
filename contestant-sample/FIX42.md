@@ -116,7 +116,7 @@ This schema defines the supported messages, raw formats, and template layouts fo
 
 8=FIX.4.2|9=148|35=8|49=XCANG3|56=CLIENT01|34=5|52=20260604-14:34:12|37=EX_ORD_99|11=CL_ORD_03|17=ACK_001|20=0|150=0|39=0|55=AAPL|54=1|38=100|151=100|14=0|6=0|10=051
 
-8=<BeginString = FIX.4.2>|9=<BodyLength>|35=<MsgType = 8>|49=<SenderCompID = XCANG3>|56=<TargetCompID>|34=<MsgSeqNum>|52=<SendingTime>|37=<OrderID>|11=<ClOrdID>|17=<ExecID>|20=<ExecTransType = 0>|150=<ExecType = 0>|39=<OrdStatus = 0>|55=<Symbol>|54=<Side>|38=<OrderQty>|151=<LeavesQty>|14=<CumQty>|6=<AvgPx = 0>|10=<CheckSum>
+8=<BeginString = FIX.4.2>|9=<BodyLength>|35=<MsgType = 8>|49=<SenderCompID = XCANG3>|56=<TargetCompID>|34=<MsgSeqNum>|52=<SendingTime>|37=<OrderID>|11=<ClOrdID>|17=<ExecID>|20=<ExecTransType = 0>|150=<ExecType = 0>|39=<OrdStatus = 0>|55=<Symbol>|54=<Side>|38=<OrderQty>|151=<LeavesQty>|14=<CumQty>|6=<AvgPx = 0>|60=<TransactTime>|44=<Price>|40=<OrdType>|10=<CheckSum>
 
 ## 11) Order Response: Partially Filled Execution Report (35=8)
 
@@ -124,7 +124,7 @@ This schema defines the supported messages, raw formats, and template layouts fo
 
 8=FIX.4.2|9=172|35=8|49=XCANG3|56=CLIENT01|34=6|52=20260604-14:35:00|37=EX_ORD_99|11=CL_ORD_03|17=FILL_882|20=0|150=1|39=1|55=AAPL|54=1|38=100|151=60|14=40|32=40|31=150.25|6=150.25|10=181
 
-8=<BeginString = FIX.4.2>|9=<BodyLength>|35=<MsgType = 8>|49=<SenderCompID = XCANG3>|56=<TargetCompID>|34=<MsgSeqNum>|52=<SendingTime>|37=<OrderID>|11=<ClOrdID>|17=<ExecID>|20=<ExecTransType = 0>|150=<ExecType = 1>|39=<OrdStatus = 1>|55=<Symbol>|54=<Side>|38=<OrderQty>|151=<LeavesQty>|14=<CumQty>|32=<LastShares>|31=<LastPx>|6=<AvgPx>|10=<CheckSum>
+8=<BeginString = FIX.4.2>|9=<BodyLength>|35=<MsgType = 8>|49=<SenderCompID = XCANG3>|56=<TargetCompID>|34=<MsgSeqNum>|52=<SendingTime>|37=<OrderID>|11=<ClOrdID>|17=<ExecID>|20=<ExecTransType = 0>|150=<ExecType = 1>|39=<OrdStatus = 1>|55=<Symbol>|54=<Side>|38=<OrderQty>|151=<LeavesQty>|14=<CumQty>|32=<LastShares>|31=<LastPx>|6=<AvgPx>|60=<TransactTime>|44=<Price>|40=<OrdType>|29=<LastCapacity = 1>|30=<LastMkt = XCANG3>|10=<CheckSum>
 
 ## 12) Order Response: Fully Filled Execution Report (35=8)
 
@@ -132,15 +132,15 @@ This schema defines the supported messages, raw formats, and template layouts fo
 
 8=FIX.4.2|9=171|35=8|49=XCANG3|56=CLIENT01|34=7|52=20260604-14:35:05|37=EX_ORD_99|11=CL_ORD_03|17=FILL_883|20=0|150=2|39=2|55=AAPL|54=1|38=100|151=0|14=100|32=60|31=150.25|6=150.25|10=192
 
-8=<BeginString = FIX.4.2>|9=<BodyLength>|35=<MsgType = 8>|49=<SenderCompID = XCANG3>|56=<TargetCompID>|34=<MsgSeqNum>|52=<SendingTime>|37=<OrderID>|11=<ClOrdID>|17=<ExecID>|20=<ExecTransType = 0>|150=<ExecType = 2>|39=<OrdStatus = 2>|55=<Symbol>|54=<Side>|38=<OrderQty>|151=<LeavesQty>|14=<CumQty>|32=<LastShares>|31=<LastPx>|6=<AvgPx>|10=<CheckSum>
+8=<BeginString = FIX.4.2>|9=<BodyLength>|35=<MsgType = 8>|49=<SenderCompID = XCANG3>|56=<TargetCompID>|34=<MsgSeqNum>|52=<SendingTime>|37=<OrderID>|11=<ClOrdID>|17=<ExecID>|20=<ExecTransType = 0>|150=<ExecType = 2>|39=<OrdStatus = 2>|55=<Symbol>|54=<Side>|38=<OrderQty>|151=<LeavesQty>|14=<CumQty>|32=<LastShares>|31=<LastPx>|6=<AvgPx>|60=<TransactTime>|44=<Price>|40=<OrdType>|29=<LastCapacity = 1>|30=<LastMkt = XCANG3>|10=<CheckSum>
 
 ## 13) Order Response: Business Logic Order Reject (35=8)
 
 ### XCANG3 Response:
 
-8=FIX.4.2|9=138|35=8|49=XCANG3|56=CLIENT01|34=8|52=20260604-14:36:00|37=NONE|11=CL_ORD_01|17=REJ_771|20=0|150=8|39=8|55=INVALID|54=1|38=100|151=0|14=0|6=0|10=099
+8=FIX.4.2|9=138|35=8|49=XCANG3|56=CLIENT01|34=8|52=20260604-14:36:00|37=NONE|11=CL_ORD_01|17=REJ_771|20=0|150=8|39=8|55=INVALID|54=1|38=100|151=0|14=0|6=0|58=NO LIQUIDITY|10=099
 
-8=<BeginString = FIX.4.2>|9=<BodyLength>|35=<MsgType = 8>|49=<SenderCompID = XCANG3>|56=<TargetCompID>|34=<MsgSeqNum>|52=<SendingTime>|37=<OrderID = NONE>|11=<ClOrdID>|17=<ExecID>|20=<ExecTransType = 0>|150=<ExecType = 8>|39=<OrdStatus = 8>|55=<Symbol>|54=<Side>|38=<OrderQty>|151=<LeavesQty>|14=<CumQty>|6=<AvgPx = 0>|10=<CheckSum>
+8=<BeginString = FIX.4.2>|9=<BodyLength>|35=<MsgType = 8>|49=<SenderCompID = XCANG3>|56=<TargetCompID>|34=<MsgSeqNum>|52=<SendingTime>|37=<OrderID = NONE>|11=<ClOrdID>|17=<ExecID>|20=<ExecTransType = 0>|150=<ExecType = 8>|39=<OrdStatus = 8>|55=<Symbol>|54=<Side>|38=<OrderQty>|151=<LeavesQty>|14=<CumQty>|6=<AvgPx = 0>|60=<TransactTime>|40=<OrdType>|58=<Text>|10=<CheckSum>
 
 <!-- ## 14) Order Cancel Request (35=F)
 

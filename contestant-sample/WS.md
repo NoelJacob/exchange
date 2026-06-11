@@ -155,7 +155,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
   "params": {
     "sender_id": "CLIENT01",
     "target_id": "XCANG3",
-    "sending_time": "2026-06-04T14:34:00.000Z",
+    "transact_time": "2026-06-04T14:34:00.000Z",
     "cl_ord_id": "CL_ORD_03",
     "symbol": "AAPL",
     "side": "buy",
@@ -178,7 +178,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
       "properties": {
         "sender_id": { "type": "string" },
         "target_id": { "type": "string", "const": "XCANG3" },
-        "sending_time": { "type": "string", "format": "date-time" },
+        "transact_time": { "type": "string", "format": "date-time" },
         "cl_ord_id": { "type": "string" },
         "symbol": { "type": "string" },
         "side": { "type": "string", "enum": ["buy", "sell"] },
@@ -188,7 +188,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
       "required": [
         "sender_id",
         "target_id",
-        "sending_time",
+        "transact_time",
         "cl_ord_id",
         "symbol",
         "side",
@@ -202,16 +202,23 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
 }
 ```
 
-#### XCANG3 Synchronous Response (Added)
+#### XCANG3 Synchronous Response (New)
 
 ```json
 {
   "jsonrpc": "2.0",
   "result": {
-    "method": "order.report.added",
+    "method": "order.report.new",
     "params": {
+      "sender_id": "XCANG3",
+      "target_id": "CLIENT01",
+      "transact_time": "2026-06-04T14:35:05.000Z",
       "cl_ord_id": "CL_ORD_03",
-      "sending_time": "2026-06-04T14:34:00.050Z"
+      "ex_ord_id": "EX_ORD_99",
+      "exec_id": "FILL_883",
+      "symbol": "AAPL",
+      "side": "buy",
+      "qty": 100,
     }
   },
   "id": 10003
@@ -227,14 +234,21 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
     "result": {
       "type": "object",
       "properties": {
-        "method": { "type": "string", "const": "order.report.added" },
+        "method": { "type": "string", "const": "order.report.new" },
         "params": {
           "type": "object",
           "properties": {
+            "sender_id": { "type": "string", "const": "XCANG3" },
+            "target_id": { "type": "string" },
+            "transact_time": { "type": "string", "format": "date-time" },
             "cl_ord_id": { "type": "string" },
-            "sending_time": { "type": "string", "format": "date-time" }
+            "ex_ord_id": { "type": "string" },
+            "exec_id": { "type": "string" },
+            "symbol": { "type": "string" },
+            "side": { "type": "string", "enum": ["buy", "sell"] },
+            "qty": { "type": "integer" },
           },
-          "required": ["cl_ord_id", "sending_time"]
+          "required": ["cl_ord_id", "transact_time"]
         }
       },
       "required": ["method", "params"]
@@ -255,7 +269,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
     "params": {
       "sender_id": "XCANG3",
       "target_id": "CLIENT01",
-      "sending_time": "2026-06-04T14:35:05.000Z",
+      "transact_time": "2026-06-04T14:35:05.000Z",
       "cl_ord_id": "CL_ORD_03",
       "ex_ord_id": "EX_ORD_99",
       "exec_id": "FILL_883",
@@ -288,7 +302,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
           "properties": {
             "sender_id": { "type": "string", "const": "XCANG3" },
             "target_id": { "type": "string" },
-            "sending_time": { "type": "string", "format": "date-time" },
+            "transact_time": { "type": "string", "format": "date-time" },
             "cl_ord_id": { "type": "string" },
             "ex_ord_id": { "type": "string" },
             "exec_id": { "type": "string" },
@@ -304,7 +318,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
           "required": [
             "sender_id",
             "target_id",
-            "sending_time",
+            "transact_time",
             "cl_ord_id",
             "ex_ord_id",
             "exec_id",
@@ -337,7 +351,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
     "params": {
       "sender_id": "XCANG3",
       "target_id": "CLIENT01",
-      "sending_time": "2026-06-04T14:35:00.000Z",
+      "transact_time": "2026-06-04T14:35:00.000Z",
       "cl_ord_id": "CL_ORD_03",
       "ex_ord_id": "EX_ORD_99",
       "exec_id": "FILL_882",
@@ -370,7 +384,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
           "properties": {
             "sender_id": { "type": "string", "const": "XCANG3" },
             "target_id": { "type": "string" },
-            "sending_time": { "type": "string", "format": "date-time" },
+            "transact_time": { "type": "string", "format": "date-time" },
             "cl_ord_id": { "type": "string" },
             "ex_ord_id": { "type": "string" },
             "exec_id": { "type": "string" },
@@ -386,7 +400,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
           "required": [
             "sender_id",
             "target_id",
-            "sending_time",
+            "transact_time",
             "cl_ord_id",
             "ex_ord_id",
             "exec_id",
@@ -419,8 +433,9 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
     "params": {
       "sender_id": "XCANG3",
       "target_id": "CLIENT01",
-      "sending_time": "2026-06-04T14:33:06.000Z",
+      "transact_time": "2026-06-04T14:33:06.000Z",
       "cl_ord_id": "CL_ORD_03",
+      "ex_ord_id": "NONE",
       "exec_id": "REJ_771",
       "symbol": "AAPL",
       "side": "sell",
@@ -447,8 +462,9 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
           "properties": {
             "sender_id": { "type": "string", "const": "XCANG3" },
             "target_id": { "type": "string" },
-            "sending_time": { "type": "string", "format": "date-time" },
+            "transact_time": { "type": "string", "format": "date-time" },
             "cl_ord_id": { "type": "string" },
+            "ex_ord_id": { "type": "string" },
             "exec_id": { "type": "string" },
             "symbol": { "type": "string" },
             "side": { "type": "string", "enum": ["buy", "sell"] },
@@ -458,8 +474,9 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
           "required": [
             "sender_id",
             "target_id",
-            "sending_time",
+            "transact_time",
             "cl_ord_id",
+            "ex_ord_id",
             "exec_id",
             "symbol",
             "side",
@@ -487,7 +504,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
   "params": {
     "sender_id": "CLIENT01",
     "target_id": "XCANG3",
-    "sending_time": "2026-06-04T14:33:05.000Z",
+    "transact_time": "2026-06-04T14:33:05.000Z",
     "cl_ord_id": "CL_ORD_03",
     "symbol": "AAPL",
     "side": "sell",
@@ -509,7 +526,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
       "properties": {
         "sender_id": { "type": "string" },
         "target_id": { "type": "string", "const": "XCANG3" },
-        "sending_time": { "type": "string", "format": "date-time" },
+        "transact_time": { "type": "string", "format": "date-time" },
         "cl_ord_id": { "type": "string" },
         "symbol": { "type": "string" },
         "side": { "type": "string", "enum": ["buy", "sell"] },
@@ -518,7 +535,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
       "required": [
         "sender_id",
         "target_id",
-        "sending_time",
+        "transact_time",
         "cl_ord_id",
         "symbol",
         "side",
@@ -541,7 +558,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
     "params": {
       "sender_id": "XCANG3",
       "target_id": "CLIENT01",
-      "sending_time": "2026-06-04T14:35:05.000Z",
+      "transact_time": "2026-06-04T14:35:05.000Z",
       "cl_ord_id": "CL_ORD_03",
       "ex_ord_id": "EX_ORD_99",
       "exec_id": "FILL_883",
@@ -574,7 +591,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
           "properties": {
             "sender_id": { "type": "string", "const": "XCANG3" },
             "target_id": { "type": "string" },
-            "sending_time": { "type": "string", "format": "date-time" },
+            "transact_time": { "type": "string", "format": "date-time" },
             "cl_ord_id": { "type": "string" },
             "ex_ord_id": { "type": "string" },
             "exec_id": { "type": "string" },
@@ -590,7 +607,7 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
           "required": [
             "sender_id",
             "target_id",
-            "sending_time",
+            "transact_time",
             "cl_ord_id",
             "ex_ord_id",
             "exec_id",
@@ -623,8 +640,9 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
     "params": {
       "sender_id": "XCANG3",
       "target_id": "CLIENT01",
-      "sending_time": "2026-06-04T14:33:06.000Z",
+      "transact_time": "2026-06-04T14:33:06.000Z",
       "cl_ord_id": "CL_ORD_03",
+      "ex_ord_id": "NONE",
       "exec_id": "REJ_771",
       "symbol": "AAPL",
       "side": "sell",
@@ -651,8 +669,9 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
           "properties": {
             "sender_id": { "type": "string", "const": "XCANG3" },
             "target_id": { "type": "string" },
-            "sending_time": { "type": "string", "format": "date-time" },
+            "transact_time": { "type": "string", "format": "date-time" },
             "cl_ord_id": { "type": "string" },
+            "ex_ord_id": { "type": "string" },
             "exec_id": { "type": "string" },
             "symbol": { "type": "string" },
             "side": { "type": "string", "enum": ["buy", "sell"] },
@@ -662,8 +681,9 @@ Engine updates, execution reports, and cancel updates are pushed as server-initi
           "required": [
             "sender_id",
             "target_id",
-            "sending_time",
+            "transact_time",
             "cl_ord_id",
+            "ex_ord_id",
             "exec_id",
             "symbol",
             "side",
@@ -696,7 +716,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
   "params": {
     "sender_id": "XCANG3",
     "target_id": "CLIENT01",
-    "sending_time": "2026-06-04T14:35:00.000Z",
+    "transact_time": "2026-06-04T14:35:00.000Z",
     "ex_ord_id": "EX_ORD_99",
     "cl_ord_id": "CL_ORD_03",
     "exec_id": "FILL_882",
@@ -724,7 +744,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
       "properties": {
         "sender_id": { "type": "string", "const": "XCANG3" },
         "target_id": { "type": "string" },
-        "sending_time": { "type": "string", "format": "date-time" },
+        "transact_time": { "type": "string", "format": "date-time" },
         "ex_ord_id": { "type": "string" },
         "cl_ord_id": { "type": "string" },
         "exec_id": { "type": "string" },
@@ -740,7 +760,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
       "required": [
         "sender_id",
         "target_id",
-        "sending_time",
+        "transact_time",
         "ex_ord_id",
         "cl_ord_id",
         "exec_id",
@@ -770,7 +790,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
   "params": {
     "sender_id": "XCANG3",
     "target_id": "CLIENT01",
-    "sending_time": "2026-06-04T14:35:05.000Z",
+    "transact_time": "2026-06-04T14:35:05.000Z",
     "ex_ord_id": "EX_ORD_99",
     "cl_ord_id": "CL_ORD_03",
     "exec_id": "FILL_883",
@@ -798,7 +818,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
       "properties": {
         "sender_id": { "type": "string", "const": "XCANG3" },
         "target_id": { "type": "string" },
-        "sending_time": { "type": "string", "format": "date-time" },
+        "transact_time": { "type": "string", "format": "date-time" },
         "ex_ord_id": { "type": "string" },
         "cl_ord_id": { "type": "string" },
         "exec_id": { "type": "string" },
@@ -814,7 +834,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
       "required": [
         "sender_id",
         "target_id",
-        "sending_time",
+        "transact_time",
         "ex_ord_id",
         "cl_ord_id",
         "exec_id",
@@ -844,8 +864,9 @@ Once the gateway routes orders to the core matching engine, downstream execution
   "params": {
     "sender_id": "XCANG3",
     "target_id": "CLIENT01",
-    "sending_time": "2026-06-04T14:33:06.000Z",
+    "transact_time": "2026-06-04T14:33:06.000Z",
     "cl_ord_id": "CL_ORD_03",
+    "ex_ord_id": "NONE",
     "exec_id": "REJ_771",
     "symbol": "AAPL",
     "side": "sell",
@@ -867,8 +888,9 @@ Once the gateway routes orders to the core matching engine, downstream execution
       "properties": {
         "sender_id": { "type": "string", "const": "XCANG3" },
         "target_id": { "type": "string" },
-        "sending_time": { "type": "string", "format": "date-time" },
+        "transact_time": { "type": "string", "format": "date-time" },
         "cl_ord_id": { "type": "string" },
+        "ex_ord_id": { "type": "string" },
         "exec_id": { "type": "string" },
         "symbol": { "type": "string" },
         "side": { "type": "string", "enum": ["buy", "sell"] },
@@ -878,8 +900,9 @@ Once the gateway routes orders to the core matching engine, downstream execution
       "required": [
         "sender_id",
         "target_id",
-        "sending_time",
+        "transact_time",
         "cl_ord_id",
+        "ex_ord_id",
         "exec_id",
         "symbol",
         "side",
@@ -904,7 +927,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
 "params": {
 "sender_id": "CLIENT01",
 "target_id": "XCANG3",
-"sending_time": "2026-06-04T14:37:00.000Z",
+"transact_time": "2026-06-04T14:37:00.000Z",
 "orig_cl_ord_id": "CL_ORD_03",
 "cl_ord_id": "CL_CAN_01",
 "symbol": "AAPL",
@@ -925,14 +948,14 @@ Once the gateway routes orders to the core matching engine, downstream execution
 "properties": {
 "sender_id": { "type": "string" },
 "target_id": { "type": "string", "const": "XCANG3" },
-"sending_time": { "type": "string", "format": "date-time" },
+"transact_time": { "type": "string", "format": "date-time" },
 "orig_cl_ord_id": { "type": "string" },
 "cl_ord_id": { "type": "string" },
 "symbol": { "type": "string" },
 "side": { "type": "string", "enum": ["buy", "sell"] },
 "qty": { "type": "integer", "minimum": 1 }
 },
-"required": ["sender_id", "target_id", "sending_time", "orig_cl_ord_id", "cl_ord_id", "symbol", "side", "qty"]
+"required": ["sender_id", "target_id", "transact_time", "orig_cl_ord_id", "cl_ord_id", "symbol", "side", "qty"]
 },
 "id": { "type": ["string", "integer"] }
 },
@@ -982,7 +1005,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
 "params": {
 "sender_id": "XCANG3",
 "target_id": "CLIENT01",
-"sending_time": "2026-06-04T14:37:02.000Z",
+"transact_time": "2026-06-04T14:37:02.000Z",
 "order_id": "EX_ORD_99",
 "cl_ord_id": "CL_CAN_01",
 "orig_cl_ord_id": "CL_ORD_03",
@@ -1008,7 +1031,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
 "properties": {
 "sender_id": { "type": "string", "const": "XCANG3" },
 "target_id": { "type": "string" },
-"sending_time": { "type": "string", "format": "date-time" },
+"transact_time": { "type": "string", "format": "date-time" },
 "order_id": { "type": "string" },
 "cl_ord_id": { "type": "string" },
 "orig_cl_ord_id": { "type": "string" },
@@ -1020,7 +1043,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
 "leaves_qty": { "type": "integer", "const": 0 },
 "cum_qty": { "type": "integer", "const": 0 }
 },
-"required": ["sender_id", "target_id", "sending_time", "order_id", "cl_ord_id", "orig_cl_ord_id", "exec_id", "ord_status", "symbol", "side", "qty", "leaves_qty", "cum_qty"]
+"required": ["sender_id", "target_id", "transact_time", "order_id", "cl_ord_id", "orig_cl_ord_id", "exec_id", "ord_status", "symbol", "side", "qty", "leaves_qty", "cum_qty"]
 },
 "id": { "type": ["string", "integer"] }
 },
@@ -1047,7 +1070,7 @@ Once the gateway routes orders to the core matching engine, downstream execution
 "params": {
 "sender_id": "XCANG3",
 "target_id": "CLIENT01",
-"sending_time": "2026-06-04T14:37:30.000Z",
+"transact_time": "2026-06-04T14:37:30.000Z",
 "order_id": "NONE",
 "cl_ord_id": "CL_CAN_01",
 "orig_cl_ord_id": "CL_ORD_03",
@@ -1068,14 +1091,14 @@ Once the gateway routes orders to the core matching engine, downstream execution
 "properties": {
 "sender_id": { "type": "string", "const": "XCANG3" },
 "target_id": { "type": "string" },
-"sending_time": { "type": "string", "format": "date-time" },
+"transact_time": { "type": "string", "format": "date-time" },
 "order_id": { "type": "string" },
 "cl_ord_id": { "type": "string" },
 "orig_cl_ord_id": { "type": "string" },
 "ord_status": { "type": "string", "const": "rejected" },
 "cxl_rej_reason": { "type": "string" }
 },
-"required": ["sender_id", "target_id", "sending_time", "order_id", "cl_ord_id", "orig_cl_ord_id", "ord_status", "cxl_rej_reason"]
+"required": ["sender_id", "target_id", "transact_time", "order_id", "cl_ord_id", "orig_cl_ord_id", "ord_status", "cxl_rej_reason"]
 },
 "id": { "type": ["string", "integer"] }
 },

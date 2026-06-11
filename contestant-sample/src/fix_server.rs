@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use fixer::application::Application;
 use fixer::errors::{
-    incorrect_data_format_for_value, required_tag_missing, value_is_incorrect,
-    MessageRejectErrorResult,
+    MessageRejectErrorResult, incorrect_data_format_for_value, required_tag_missing, unsupported_message_type, value_is_incorrect
 };
 use fixer::log::screen_log::ScreenLogFactory;
 use fixer::message::Message;
@@ -11,30 +10,14 @@ use fixer::registry::send_to_target_owned;
 use fixer::session::session_id::SessionID;
 use fixer::settings::Settings;
 use fixer::store::MemoryStoreFactory;
-use fixer::tag::TAG_MSG_TYPE;
 use simple_error::SimpleResult;
 use tokio::io::BufReader;
 use tokio::sync::mpsc;
+use pricelevel::prelude::*;
+use fixer_fix::tag;
+use fixer_fix::enums;
 
-// FIX 4.2 body field tags (not in fixer::tag)
-pub const TAG_CL_ORD_ID: fixer::tag::Tag = 11;
-pub const TAG_EXEC_ID: fixer::tag::Tag = 17;
-pub const TAG_EXEC_TRANS_TYPE: fixer::tag::Tag = 101;
-pub const TAG_ORDER_ID: fixer::tag::Tag = 37;
-pub const TAG_ORDER_QTY: fixer::tag::Tag = 38;
-pub const TAG_ORD_STATUS: fixer::tag::Tag = 39;
-pub const TAG_ORD_TYPE: fixer::tag::Tag = 40;
-pub const TAG_PRICE: fixer::tag::Tag = 44;
-pub const TAG_SIDE: fixer::tag::Tag = 54;
-pub const TAG_SYMBOL: fixer::tag::Tag = 55;
-pub const TAG_AVG_PX: fixer::tag::Tag = 6;
-pub const TAG_LAST_SHARES: fixer::tag::Tag = 32;
-pub const TAG_LAST_PX: fixer::tag::Tag = 31;
-pub const TAG_EXEC_TYPE: fixer::tag::Tag = 150;
-pub const TAG_LEAVES_QTY: fixer::tag::Tag = 151;
-pub const TAG_CUM_QTY: fixer::tag::Tag = 14;
-pub const TAG_TRANSACT_TIME: fixer::tag::Tag = 60;
-pub const TAG_SENDER_COMP_ID: fixer::tag::Tag = 49;
+use crate::ExecutionReportMethod;
 
 /// Pending reply to send through the channel.
 pub struct PendingReply {
@@ -48,46 +31,10 @@ struct FixApp {
 }
 
 impl FixApp {
-    /// Build and queue a Reject ExecutionReport (35=8, 150=8, 39=8).
-    fn send_reject(
-        &self,
-        msg: &Message,
-        session_id: &Arc<SessionID>,
-        cl_ord_id: Option<&str>,
-        symbol: Option<&str>,
-        reason: &str,
-    ) {
-        eprintln!("[FIX] Reject: {reason}");
-        let exec_id = self
-            .state
-            .exec_id_seq
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let mut reply = msg.reverse_route();
-        reply.header.set_string(TAG_MSG_TYPE, "8");
-        reply.body.set_int(TAG_EXEC_ID, exec_id as isize);
-        reply.body.set_string(TAG_EXEC_TRANS_TYPE, "0");
-        reply.body.set_string(TAG_EXEC_TYPE, "8");
-        reply.body.set_string(TAG_ORD_STATUS, "8");
-        if let Some(c) = cl_ord_id {
-            reply.body.set_string(TAG_CL_ORD_ID, c);
-        }
-        if let Some(s) = symbol {
-            reply.body.set_string(TAG_SYMBOL, s);
-        }
-        reply
-            .body
-            .set_string(TAG_TRANSACT_TIME, &crate::tag60_now());
-        let _ = self.reply_tx.send(PendingReply {
-            msg: reply,
-            session_id: Arc::clone(session_id),
-        });
-    }
-
     /// Process a validated NewOrderSingle and send the sync ExecutionReport.
     #[allow(clippy::too_many_arguments)]
     fn process_new_order(
         &self,
-        msg: &Message,
         session_id: &Arc<SessionID>,
         cl_ord_id: &str,
         symbol: &str,
@@ -95,102 +42,88 @@ impl FixApp {
         order_qty: u64,
         ord_type: &str,
         price: f64,
+        sender_comp: &str
     ) {
         let is_market = ord_type == "1";
 
         let ob_side = match side_val {
             "1" => orderbook_rs::Side::Buy,
             "2" => orderbook_rs::Side::Sell,
-            _ => unreachable!(), // validated in from_app
+            _ => unreachable!(),
         };
-
-        let price_cents = if is_market {
-            0
-        } else {
-            (price * 100.0).round() as u128
-        };
-
-        // Extract SenderCompID for STP user hash and omnibus support
-        let sender_comp = msg
-            .header
-            .get_string(TAG_SENDER_COMP_ID)
-            .unwrap_or_else(|_| "UNKNOWN".to_string());
-
-        let user_hash = crate::hash_user_id(&sender_comp);
 
         eprintln!(
-            "[FIX] NewOrderSingle cl_ord_id={cl_ord_id} symbol={symbol} side={side_val} price={price_cents} qty={order_qty} sender={sender_comp}",
+            "[FIX] NewOrderSingle cl_ord_id={cl_ord_id} symbol={symbol} side={side_val} price={price} qty={order_qty} sender={sender_comp}",
         );
 
         // Lock books, get/create book with TradeListener (scoped — released before submit)
         let book = {
             let mut books = self.state.books.lock();
-            match crate::get_or_create_book(&mut books, symbol, &self.state.trade_tx) {
-                Some(b) => b,
-                None => {
-                    drop(books);
-                    self.send_reject(
-                        msg,
-                        session_id,
-                        Some(cl_ord_id),
-                        Some(symbol),
-                        "empty/whitespace Symbol (tag 55)",
-                    );
-                    return;
-                }
-            }
+            crate::get_or_create_book(&mut books, symbol, &self.state.trade_tx)
         };
 
+        let ex_ord_id = self.state.order_id_seq
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .to_string();
         let info = crate::OrderInfo {
-            user_id: sender_comp.clone(),
-            target_id: sender_comp.clone(),
+            target_id: sender_comp.to_string(),
             cl_ord_id: cl_ord_id.to_string(),
             order_qty,
             cum_value_cents: 0,
-            ex_ord_id: String::new(),
+            cum_qty: 0,
+            ex_ord_id,
             connection_kind: crate::ConnectionKind::Fix {
                 session_id: Arc::clone(session_id),
                 reply_tx: self.reply_tx.clone(),
             },
+            price
         };
 
-        let info_for_report = crate::OrderInfo {
-            ex_ord_id: String::new(),
-            ..info.clone()
+        let outcome = {
+            let mut pending = self.state.pending.lock();
+            crate::submit(
+                &book,
+                is_market,
+                ob_side,
+                &mut pending,
+                &info
+            )
         };
 
-        let outcome = match crate::submit(
-            &book,
-            is_market,
-            ob_side,
-            order_qty,
-            price_cents,
-            user_hash,
-            &mut self.state.pending.lock(),
-            info,
-            &self.state.order_id_seq,
-            &self.state.exec_id_seq,
-        ) {
-            Ok(o) => o,
+        let exec_id = self.
+        state
+        .exec_id_seq
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .to_string();
+
+        // Build ExecutionReport from outcome and send FIX 35=8
+        let report = match outcome {
+            Ok(o) => {
+                crate::build_execution_report(
+                    o,
+                    &info,
+                    symbol,
+                    ob_side,
+                    exec_id,
+                    is_market,
+                )
+            }
             Err(e) => {
-                self.send_reject(
-                    msg,
-                    session_id,
-                    Some(cl_ord_id),
-                    Some(symbol),
-                    &e.to_string(),
-                );
-                return;
+                eprintln!("[FIX] Order {} rejected: {e}", cl_ord_id);
+                crate::build_reject_report(
+                    e.to_string(),
+                    &info,
+                    symbol,
+                    ob_side,
+                    exec_id,
+                    is_market,
+                )
             }
         };
 
-        // Build ExecutionReport from outcome and send FIX 35=8
-        let report =
-            crate::build_execution_report(&outcome, &info_for_report, symbol, ob_side, order_qty);
-        let mut reply = msg.reverse_route();
-        exec_report_to_fix_body(&report, &mut reply);
+        let resp = report_to_fix(&report);
         let _ = self.reply_tx.send(PendingReply {
-            msg: reply,
+            msg: resp,
             session_id: Arc::clone(session_id),
         });
     }
@@ -220,154 +153,169 @@ impl Application for FixApp {
     }
 
     fn from_app(&self, msg: &Message, session_id: &Arc<SessionID>) -> MessageRejectErrorResult {
-        if !msg.is_msg_type_of("D") {
-            return Ok(());
+        if !msg.is_msg_type_of(enums::msg_type::ORDER_SINGLE) {
+            return Err(unsupported_message_type());
         }
 
         // --- session-level validation: return Err → library sends 35=3 ---
+        let comp_id = msg
+            .header
+            .get_string(tag::SENDER_COMP_ID)
+            .map_err(|_| required_tag_missing(tag::SENDER_COMP_ID))?;
 
         let cl_ord_id = msg
             .body
-            .get_string(TAG_CL_ORD_ID)
-            .map_err(|_| required_tag_missing(TAG_CL_ORD_ID))?;
+            .get_string(tag::CL_ORD_ID)
+            .map_err(|_| required_tag_missing(tag::CL_ORD_ID))?;
 
-        let symbol = msg
+        let symbol_raw = msg
             .body
-            .get_string(TAG_SYMBOL)
-            .map_err(|_| required_tag_missing(TAG_SYMBOL))?;
+            .get_string(tag::SYMBOL)
+            .map_err(|_| required_tag_missing(tag::SYMBOL))?;
+
+        let symbol = symbol_raw.trim();
+        if symbol.is_empty() {
+            return Err(value_is_incorrect(tag::SYMBOL));
+        }
 
         let side_str = msg
             .body
-            .get_string(TAG_SIDE)
-            .map_err(|_| required_tag_missing(TAG_SIDE))?;
-
-        let order_qty_raw = msg
-            .body
-            .get_int(TAG_ORDER_QTY)
-            .map_err(|_| required_tag_missing(TAG_ORDER_QTY))?;
-        let order_qty = order_qty_raw as u64;
-        if order_qty == 0 {
-            return Err(required_tag_missing(TAG_ORDER_QTY));
-        }
-        if order_qty_raw < 0 {
-            return Err(value_is_incorrect(TAG_ORDER_QTY));
-        }
+            .get_string(tag::SIDE)
+            .map_err(|_| required_tag_missing(tag::SIDE))?;
 
         // Side value must be 1 (Buy) or 2 (Sell)
         match side_str.as_str() {
             "1" | "2" => {}
-            _ => return Err(value_is_incorrect(TAG_SIDE)),
+            _ => return Err(value_is_incorrect(tag::SIDE)),
         }
 
-        // OrdType (default limit if missing)
+        let order_qty_raw = msg
+            .body
+            .get_int(tag::ORDER_QTY)
+            .map_err(|_| required_tag_missing(tag::ORDER_QTY))?;
+
+        let order_qty = order_qty_raw as u64;
+        if order_qty == 0 {
+            return Err(required_tag_missing(tag::ORDER_QTY));
+        }
+        if order_qty_raw < 0 {
+            return Err(value_is_incorrect(tag::ORDER_QTY));
+        }
+
         let ord_type = msg
             .body
-            .get_string(TAG_ORD_TYPE)
-            .unwrap_or_else(|_| "2".to_string());
-        // Validate OrdType — only 1 (Market) and 2 (Limit) are supported
-        if ord_type != "1" && ord_type != "2" {
-            return Err(incorrect_data_format_for_value(TAG_ORD_TYPE));
-        }
+            .get_string(tag::ORD_TYPE)
+            .map_err(|_| required_tag_missing(tag::ORD_TYPE))?;
 
-        // For limit orders, validate Price exists and is parseable
-        if ord_type == "2" {
-            let price_str = msg
-                .body
-                .get_string(TAG_PRICE)
-                .map_err(|_| required_tag_missing(TAG_PRICE))?;
-            // Validate format — parse as f64, reject unparseable
-            price_str
-                .parse::<f64>()
-                .map_err(|_| incorrect_data_format_for_value(TAG_PRICE))?;
-        }
-
-        // --- business logic (sends 35=8 ExecutionReport Reject on failure) ---
         // For non-positive price validation we still go through business reject
         // since 0.00 is valid FIX format, just not a valid trading price.
         let price: f64 = if ord_type == "1" {
             0.0
-        } else {
-            let price_str = msg.body.get_string(TAG_PRICE).expect("price tag must exist for limit orders");
+        } else if ord_type == "2" {
+            let price_str = msg
+            .body
+            .get_string(tag::PRICE)
+            .map_err(|_| required_tag_missing(tag::PRICE))?;
+
             match price_str.parse::<f64>() {
                 Ok(p) if p > 0.0 => p,
-                Ok(_) => {
-                    self.send_reject(
-                        msg,
-                        session_id,
-                        Some(&cl_ord_id),
-                        Some(&symbol),
-                        "non-positive Price (tag 44) for limit order",
-                    );
-                    return Ok(());
-                }
-                Err(_) => unreachable!(), // caught by format validation above
+                _ => return Err(value_is_incorrect(tag::PRICE)), // caught by format validation above
             }
+        } else {
+            // Validate OrdType — only 1 (Market) and 2 (Limit) are supported
+            return Err(incorrect_data_format_for_value(tag::ORD_TYPE));
         };
 
         self.process_new_order(
-            msg, session_id, &cl_ord_id, &symbol, &side_str, order_qty, &ord_type, price,
+            session_id,
+            &cl_ord_id,
+            symbol,
+            &side_str,
+            order_qty,
+            &ord_type,
+            price,
+            &comp_id
         );
         Ok(())
     }
 }
 /// Fill body tags of a FIX 35=8 ExecutionReport message from a structured
-/// [`ExecutionReport`]. The caller is responsible for setting the message
-/// type and header routing (e.g. via [`Message::reverse_route`] or manual
-/// SenderCompID / TargetCompID).
-pub fn exec_report_to_fix_body(report: &crate::ExecutionReport, reply: &mut Message) {
-    reply.header.set_string(TAG_MSG_TYPE, "8");
-
-    if report.ex_ord_id == "NONE" {
-        reply.body.set_string(TAG_ORDER_ID, "NONE");
+/// [`ExecutionReport`].
+pub fn report_to_fix(report: &crate::ExecutionReport) -> Message {
+    let mut msg = Message::new();
+    msg.header.set_string(tag::MSG_TYPE, enums::msg_type::EXECUTION_REPORT);
+    msg.body.set_string(tag::CL_ORD_ID, &report.cl_ord_id);
+    msg.body.set_string(tag::EXEC_ID, &report.exec_id);
+    msg.body.set_int(tag::EXEC_TRANS_TYPE, 0);
+    msg.body.set_string(tag::SYMBOL, &report.symbol);
+    msg.body.set_int(tag::ORDER_QTY, report.qty as isize);
+    msg.body.set_int(tag::LEAVES_QTY, report.leaves_qty as isize);
+    msg.body.set_int(tag::CUM_QTY, report.cum_qty as isize);
+    msg.body.set_string(tag::AVG_PX, &format!("{:.2}", report.avg_px));
+    msg.body.set_string(tag::TRANSACT_TIME, &report.transact_time.format("%Y%m%d-%H:%M:%S.%.6f").to_string());
+    if report.is_market {
+        msg.body.set_int(tag::ORD_TYPE, 1);
     } else {
-        reply
-            .body
-            .set_int(TAG_ORDER_ID, report.ex_ord_id.parse().expect("ex_ord_id always numeric"));
+        msg.body.set_int(tag::ORD_TYPE, 2);
+        msg.body.set_int(tag::PRICE, report.price as isize);
     }
-    reply
-        .body
-        .set_int(TAG_EXEC_ID, report.exec_id.parse().expect("exec_id always numeric"));
-    reply.body.set_string(TAG_EXEC_TRANS_TYPE, "0");
-    let (exec_type, ord_status) = match report.method {
-        "fill" => ("2", "2"),
-        "partial" => ("1", "1"),
-        "rejected" => ("8", "8"),
-        "added" => ("0", "0"),
-        _ => unreachable!("unexpected report.method: {}", report.method),
+    match report.side {
+        Side::Buy => {
+            msg.body.set_string(tag::SIDE, enums::side::BUY);
+        }
+        Side::Sell => {
+            msg.body.set_string(tag::SIDE, enums::side::SELL);
+        }
     };
-    reply.body.set_string(TAG_EXEC_TYPE, exec_type);
-    reply.body.set_string(TAG_ORD_STATUS, ord_status);
-    reply.body.set_string(TAG_SYMBOL, &report.symbol);
+    match report.method {
+        ExecutionReportMethod::New => {
+            msg.body.set_string(tag::EXEC_TYPE, enums::exec_type::NEW);
+            msg.body.set_string(tag::ORD_STATUS, enums::ord_status::NEW);
 
-    let side_fix = match report.side.as_str() {
-        "buy" => "1",
-        "sell" => "2",
-        _ => unreachable!("unexpected report.side: {}", report.side),
+            let ex_ord_id = report.ex_ord_id.as_ref().expect("[FIX] Missing ex_ord_id");
+            msg.body.set_string(tag::ORDER_ID, ex_ord_id);
+        }
+        ExecutionReportMethod::Partial => {
+            msg.body.set_string(tag::EXEC_TYPE, enums::exec_type::PARTIAL_FILL);
+            msg.body.set_string(tag::ORD_STATUS, enums::ord_status::PARTIALLY_FILLED);
+            msg.body.set_int(tag::LAST_CAPACITY, 1);
+            msg.body.set_string(tag::LAST_MKT, "XCANG3");
+
+
+            let ex_ord_id = report.ex_ord_id.as_ref().expect("[FIX] Missing ex_ord_id");
+            let last_shares = report.last_shares.expect("[FIX] Missing last_shares");
+            let last_px = report.last_px.expect("[FIX] Missing last_px");
+            msg.body.set_string(tag::ORDER_ID, ex_ord_id);
+            msg.body.set_int(tag::LAST_SHARES, last_shares as isize);
+            msg.body.set_string(tag::LAST_PX, &format!("{:.2}", last_px));
+        }
+        ExecutionReportMethod::Fill => {
+            msg.body.set_string(tag::EXEC_TYPE, enums::exec_type::FILL);
+            msg.body.set_string(tag::ORD_STATUS, enums::ord_status::FILLED);
+            msg.body.set_int(tag::LAST_CAPACITY, 1);
+            msg.body.set_string(tag::LAST_MKT, "XCANG3");
+
+            let ex_ord_id = report.ex_ord_id.as_ref().expect("[FIX] Missing ex_ord_id");
+            let last_shares = report.last_shares.expect("[FIX] Missing last_shares");
+            let last_px = report.last_px.expect("[FIX] Missing last_px");
+            msg.body.set_string(tag::ORDER_ID, ex_ord_id);
+            msg.body.set_int(tag::LAST_SHARES, last_shares as isize);
+            msg.body.set_string(tag::LAST_PX, &format!("{:.2}", last_px));
+        }
+        ExecutionReportMethod::Rejected => {
+            let reject_reason = report.reject_reason.as_ref().expect("[FIX] Missing reject_reason");
+            msg.body.set_string(tag::EXEC_TYPE, enums::exec_type::REJECTED);
+            msg.body.set_string(tag::ORD_STATUS, enums::ord_status::REJECTED);
+            msg.body.set_string(tag::TEXT, reject_reason);
+
+            let ex_ord_id = report.ex_ord_id.as_ref().expect("[FIX] Missing ex_ord_id");
+            msg.body.set_string(tag::ORDER_ID, ex_ord_id);
+        }
     };
-    reply.body.set_string(TAG_SIDE, side_fix);
-    reply.body.set_int(TAG_ORDER_QTY, report.qty as isize);
-    reply
-        .body
-        .set_int(TAG_LEAVES_QTY, report.leaves_qty as isize);
-    reply.body.set_int(TAG_CUM_QTY, report.cum_qty as isize);
+    msg
 
-    if report.last_shares > 0 {
-        reply
-            .body
-            .set_int(TAG_LAST_SHARES, report.last_shares as isize);
-        let last_px = format!("{:.2}", report.last_px);
-        reply.body.set_string(TAG_LAST_PX, &last_px);
-    }
-
-    let avg_px = format!("{:.2}", report.avg_px);
-    reply.body.set_string(TAG_AVG_PX, &avg_px);
-    reply.body.set_string(TAG_CL_ORD_ID, &report.cl_ord_id);
-
-    // FIX uses YYYYMMDD-HH:MM:SS format regardless of the building_time
-    reply
-        .body
-        .set_string(TAG_TRANSACT_TIME, &crate::tag60_now());
 }
+
 pub async fn run(state: Arc<crate::AppState>) -> Result<(), Box<dyn std::error::Error>> {
     let cfg = "\
 [DEFAULT]
