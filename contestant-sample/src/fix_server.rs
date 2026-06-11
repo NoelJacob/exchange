@@ -257,7 +257,7 @@ pub fn report_to_fix(report: &crate::ExecutionReport) -> Message {
         msg.body.set_int(tag::ORD_TYPE, 1);
     } else {
         msg.body.set_int(tag::ORD_TYPE, 2);
-        msg.body.set_int(tag::PRICE, report.price as isize);
+        msg.body.set_string(tag::PRICE, &format!("{:.2}", report.price));
     }
     match report.side {
         Side::Buy => {
