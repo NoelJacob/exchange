@@ -459,6 +459,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (report, info, exec_id)
             };
 
+                eprintln!("[DISPATCH-SEND] cl_ord_id={} exec_id={} via {:?}",
+                    info.cl_ord_id, exec_id, info.connection_kind);
                 let send_ok = match info.connection_kind {
                     ConnectionKind::Fix { session_id, reply_tx } => {
                         let resp = fix_server::report_to_fix(&report);
@@ -477,6 +479,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         sender.send(notif.to_string()).is_ok()
                     },
                 };
+                eprintln!("[DISPATCH-SEND-RESULT] cl_ord_id={} exec_id={} ok={}",
+                    info.cl_ord_id, exec_id, send_ok);
 
                 if !send_ok {
                     eprintln!("[DISPATCH] Dropped maker fill for {} — connection closed (seq={} lost)", info.cl_ord_id, exec_id);

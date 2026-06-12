@@ -351,8 +351,15 @@ ResetOnLogon=Y
     // Background task: drain reply channel and send messages
     tokio::spawn(async move {
         while let Some(PendingReply { msg, session_id }) = reply_rx.recv().await {
-            if let Err(e) = send_to_target_owned(msg, &session_id).await {
-                eprintln!("[FIX] Send error: {e}");
+            let exec_id = msg.body.get_string(tag::EXEC_ID).unwrap_or_else(|_| "?".into());
+            let cl_ord_id = msg.body.get_string(tag::CL_ORD_ID).unwrap_or_else(|_| "?".into());
+            match send_to_target_owned(msg, &session_id).await {
+                Ok(()) => {
+                    eprintln!("[FIX-DISPATCH-DELIVERED] exec_id={exec_id} cl_ord_id={cl_ord_id}");
+                }
+                Err(e) => {
+                    eprintln!("[FIX-DISPATCH-LOST] exec_id={exec_id} cl_ord_id={cl_ord_id}: {e}");
+                }
             }
         }
     });
