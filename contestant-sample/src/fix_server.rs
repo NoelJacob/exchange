@@ -81,6 +81,11 @@ impl FixApp {
 
         let (outcome, exec_id) = {
             let mut pending = self.state.pending.lock();
+            // Reserve exec_seq atomically. Will be reclaimed via CAS if send fails.
+            let exec_id = self.state.exec_id_seq
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                .to_string();
+            eprintln!("[EXEC-ID-GEN] FIX sync: cl_ord_id={} exec_id={} (before submit)", cl_ord_id, exec_id);
             let outcome = crate::submit(
                 &book,
                 is_market,
@@ -88,46 +93,43 @@ impl FixApp {
                 &mut pending,
                 &info
             );
-            let exec_id: String = self.
-            state
-            .exec_id_seq
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            .to_string();
 
             (outcome, exec_id)
         };
 
 
         // Build ExecutionReport from outcome and send FIX 35=8
-        let report = match outcome {
+        let msg_body = match outcome {
             Ok(o) => {
-                crate::build_execution_report(
+                let report = crate::build_execution_report(
                     o,
                     &info,
                     symbol,
                     ob_side,
-                    exec_id,
+                    &exec_id,
                     is_market,
-                )
+                );
+                report_to_fix(&report)
             }
             Err(e) => {
                 eprintln!("[FIX] Order {} rejected: {e}", cl_ord_id);
-                crate::build_reject_report(
+                let report = crate::build_reject_report(
                     e.to_string(),
                     &info,
                     symbol,
                     ob_side,
-                    exec_id,
+                    &exec_id,
                     is_market,
-                )
+                );
+                report_to_fix(&report)
             }
         };
-
-        let resp = report_to_fix(&report);
-        let _ = self.reply_tx.send(PendingReply {
-            msg: resp,
+        if self.reply_tx.send(PendingReply {
+            msg: msg_body,
             session_id: Arc::clone(session_id),
-        });
+        }).is_err() {
+            eprintln!("[FIX] Dropped response for {} — connection closed (seq={} lost)", cl_ord_id, exec_id);
+        }
     }
 }
 

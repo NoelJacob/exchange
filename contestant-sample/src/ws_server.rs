@@ -36,8 +36,6 @@ struct CreateLimitParams {
     side: String,
     qty: u64,
     price: f64,
-    #[allow(dead_code)] // client-side seq number; not used in matching
-    seq: u64,
 }
 
 /// Market-order params (per WS.md §2.2).
@@ -53,8 +51,6 @@ struct CreateMarketParams {
     symbol: String,
     side: String,
     qty: u64,
-    #[allow(dead_code)]
-    seq: u64,
 }
 
 #[derive(Debug)]
@@ -221,18 +217,6 @@ pub fn report_to_json(report: &crate::ExecutionReport) -> serde_json::Value {
     }
 }
 
-/// Send a server-initiated notification with an `ExecutionReport` as params.
-/// No `id` field — per WS.md §3.
-pub fn send_notification(ws_tx: &mpsc::UnboundedSender<String>, report: &crate::ExecutionReport) {
-    let val = report_to_json(report);
-    let resp = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": val.get("method"),
-        "params": val.get("params")
-    });
-
-    let _ = ws_tx.send(resp.to_string());
-}
 
 fn parse_params(method: &str, params: &serde_json::Value) -> Result<ParsedParams, String> {
     match method {
@@ -437,6 +421,10 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
 
         let (outcome, exec_id) = {
             let mut pending = state.pending.lock();
+            let exec_id = state.exec_id_seq
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                .to_string();
+            eprintln!("[EXEC-ID-GEN] WS sync: cl_ord_id={} exec_id={} (before submit)", parsed.cl_ord_id(), exec_id);
             let outcome = crate::submit(
                 &book,
                 is_market,
@@ -444,10 +432,6 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
                 &mut pending,
                 &info
             );
-            let exec_id = state
-            .exec_id_seq
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            .to_string();
 
             (outcome, exec_id)
         };
@@ -459,7 +443,7 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
                     &info,
                     parsed.symbol(),
                     ob_side,
-                    exec_id,
+                    &exec_id,
                     is_market
                 )
             }
@@ -470,7 +454,7 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
                     &info,
                     parsed.symbol(),
                     ob_side,
-                    exec_id,
+                    &exec_id,
                     is_market
                 )
             }
@@ -483,7 +467,10 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
             "id": req.id
         });
 
-        let _ = ws_tx.send(resp.to_string());
+        if ws_tx.send(resp.to_string()).is_err() {
+            eprintln!("[WS] Dropped response for {} — client disconnected (seq={} lost)", parsed.cl_ord_id(), exec_id);
+            break;  // Client is gone, stop processing
+        }
     }
 
     eprintln!("[WS] Client disconnected");

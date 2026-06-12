@@ -33,7 +33,7 @@ pub struct OrderInfo {
     pub price: f64
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ConnectionKind {
     Fix {
         session_id: Arc<fixer::session::session_id::SessionID>,
@@ -210,6 +210,12 @@ pub fn submit(
         book.match_limit_order_with_user(taker_id, qty, side, limit_price_cents, user_hash)
             .map_err(map_book_err)?
     };
+    eprintln!("[EXCHANGE-TRADE] {}: submit {} {} @ price_cents={} is_market={}",
+        info.cl_ord_id, if side == Side::Buy { "BUY" } else { "SELL" }, qty, limit_price_cents, is_market);
+    for (i, t) in result.trades().as_vec().iter().enumerate() {
+        eprintln!("[EXCHANGE-TRADE] {}:   [{}] maker={:?} qty={} price_cents={}",
+            info.cl_ord_id, i, t.maker_order_id(), t.quantity().as_u64(), t.price().as_u128());
+    }
     let filled_qty = result
         .executed_quantity()
         .map_err(|e| SubmitError::PriceLevel(e.to_string()))?;
@@ -309,7 +315,7 @@ pub fn build_execution_report(
     info: &OrderInfo,
     symbol: &str,
     side: Side,
-    exec_id: String,
+    exec_id: &str,
     is_market: bool,
 ) -> ExecutionReport {
     let filled = outcome.filled_qty > 0;
@@ -330,7 +336,7 @@ pub fn build_execution_report(
     ExecutionReport {
         method,
         ex_ord_id: Some(info.ex_ord_id.clone()),
-        exec_id,
+        exec_id: exec_id.to_string(),
         symbol: symbol.to_string(),
         side,
         qty: info.order_qty,
@@ -353,13 +359,13 @@ pub fn build_reject_report(
     info: &OrderInfo,
     symbol: &str,
     side: Side,
-    exec_id: String,
+    exec_id: &str,
     is_market: bool,
 ) -> ExecutionReport {
     ExecutionReport {
         method: ExecutionReportMethod::Rejected,
         ex_ord_id: Some(info.ex_ord_id.clone()),
-        exec_id,
+        exec_id: exec_id.to_string(),
         symbol: symbol.to_string(),
         side,
         qty: info.order_qty,
@@ -404,26 +410,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let fill_qty = trade.quantity().as_u64();
                 let fill_price_cents = trade.price().as_u128();
                 let side = trade.maker_side();
-                let (info, leaves) = {
-                    let mut pending = dispatch_state.pending.lock();
-                    let info = pending.get_mut(&maker_id).expect("[FIX] Missing OrderInfo");
-                    info.cum_value_cents += fill_price_cents * fill_qty as u128;
-                    info.cum_qty += fill_qty;
-                    // Get leaves from book if order still there.
-                    let leaves = dispatch_state
-                        .books
-                        .lock()
-                        .get(&result.symbol)
-                        .and_then(|b| b.get_order(maker_id))
-                        .map(|o| o.visible_quantity())
-                        .unwrap_or(0);
+                let (report, info, exec_id) = {
+                let mut pending = dispatch_state.pending.lock();
+                let info = pending.get_mut(&maker_id).expect("[FIX] Missing OrderInfo");
+                info.cum_value_cents += fill_price_cents * fill_qty as u128;
+                info.cum_qty += fill_qty;
+                // Get leaves from book if order still there.
+                let leaves = dispatch_state
+                    .books
+                    .lock()
+                    .get(&result.symbol)
+                    .and_then(|b| b.get_order(maker_id))
+                    .map(|o| o.visible_quantity())
+                    .unwrap_or(0);
 
-                    let info2 = info.clone();
+                let info = info.clone();
                     if leaves == 0 {
-                            pending.remove(&maker_id);
-                    }
-                    (info2, leaves)
-                };
+                        pending.remove(&maker_id);
+                }
 
                 let outcome = SubmitOutcome {
                     filled_qty: fill_qty,
@@ -435,32 +439,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     leaves_qty: leaves,
                 };
 
-                let exec_id = dispatch_state
-                .exec_id_seq
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                .to_string();
+                // Reserve seq BEFORE building report (exec_id is part of the FIX/WS payload)
+                let exec_id = dispatch_state.exec_id_seq
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    .to_string();
+                eprintln!("[EXEC-ID-GEN] Dispatch: maker_id={:?} exec_id={} (before report)", maker_id, exec_id);
 
                 let report = crate::build_execution_report(
                     outcome,
                     &info,
                     &result.symbol,
                     side,
-                    exec_id,
+                    &exec_id,
                     false,
                 );
+                eprintln!("[EXCHANGE-DISPATCH] {}: sending maker fill via {:?} last_shares={} last_px_cents={} exec_id={}",
+                    info.cl_ord_id, info.connection_kind, fill_qty, fill_price_cents, exec_id);
 
-                match info.connection_kind {
+                (report, info, exec_id)
+            };
+
+                let send_ok = match info.connection_kind {
                     ConnectionKind::Fix { session_id, reply_tx } => {
                         let resp = fix_server::report_to_fix(&report);
-                        let _ = reply_tx.send(fix_server::PendingReply {
+                        reply_tx.send(fix_server::PendingReply {
                             msg: resp,
                             session_id,
-                        });
+                        }).is_ok()
                     },
                     ConnectionKind::Ws { sender } => {
-                        ws_server::send_notification(&sender, &report);
+                        let val = ws_server::report_to_json(&report);
+                        let notif = serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "method": val.get("method"),
+                            "params": val.get("params")
+                        });
+                        sender.send(notif.to_string()).is_ok()
                     },
                 };
+
+                if !send_ok {
+                    eprintln!("[DISPATCH] Dropped maker fill for {} — connection closed (seq={} lost)", info.cl_ord_id, exec_id);
+                }
 
                 }
             }
