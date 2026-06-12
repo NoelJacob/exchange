@@ -435,20 +435,22 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
             price: price_f64
         };
 
-        let outcome = {
+        let (outcome, exec_id) = {
             let mut pending = state.pending.lock();
-            crate::submit(
+            let outcome = crate::submit(
                 &book,
                 is_market,
                 ob_side,
                 &mut pending,
                 &info
-            )
+            );
+            let exec_id = state
+            .exec_id_seq
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            .to_string();
+
+            (outcome, exec_id)
         };
-        let exec_id = state
-        .exec_id_seq
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        .to_string();
 
         let report = match outcome {
             Ok(o) => {

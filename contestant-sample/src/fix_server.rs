@@ -79,22 +79,24 @@ impl FixApp {
             price
         };
 
-        let outcome = {
+        let (outcome, exec_id) = {
             let mut pending = self.state.pending.lock();
-            crate::submit(
+            let outcome = crate::submit(
                 &book,
                 is_market,
                 ob_side,
                 &mut pending,
                 &info
-            )
+            );
+            let exec_id: String = self.
+            state
+            .exec_id_seq
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            .to_string();
+
+            (outcome, exec_id)
         };
 
-        let exec_id = self.
-        state
-        .exec_id_seq
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        .to_string();
 
         // Build ExecutionReport from outcome and send FIX 35=8
         let report = match outcome {
