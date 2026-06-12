@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    ports:
+      - "9092:9092"
+    command:
+      - redpanda
+      - start
+      - --mode
+      - dev-container
+      - --kafka-addr
+      - 0.0.0.0:9092
+
+  questdb:
+    image: questdb/questdb:latest
+    ports:
+      - "9000:9000"
+      - "8812:8812"
+
+  valkey:
+    image: valkey/valkey:latest
+    ports:
+      - "6379:6379"
