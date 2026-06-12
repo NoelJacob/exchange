@@ -412,7 +412,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let side = trade.maker_side();
                 let (report, info, exec_id) = {
                 let mut pending = dispatch_state.pending.lock();
-                let info = pending.get_mut(&maker_id).expect("[FIX] Missing OrderInfo");
+                let info = match pending.get_mut(&maker_id) {
+                    Some(info) => info,
+                    None => {
+                        eprintln!("[DISPATCH-ERR] Missing OrderInfo for maker_id={:?} — fill lost (qty={} price_cents={})", maker_id, fill_qty, fill_price_cents);
+                        continue;
+                    }
+                };
                 info.cum_value_cents += fill_price_cents * fill_qty as u128;
                 info.cum_qty += fill_qty;
                 // Get leaves from book if order still there.

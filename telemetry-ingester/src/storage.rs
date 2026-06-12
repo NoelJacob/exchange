@@ -71,6 +71,9 @@ impl Storage {
 
     pub async fn insert_correctness(&self, row: &CorrectnessRow) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let ts = Utc::now().naive_utc();
+        eprintln!("[STORAGE-INSERT] correctness {} {} {} px_exp={:.2} px_act={:.2} qty_exp={} qty_act={}",
+            row.contestant_id, row.cl_ord_id, row.verdict,
+            row.expected_px, row.actual_px, row.expected_qty, row.actual_qty);
         sqlx::query("INSERT INTO correctness_events (ts,contestant_id,cl_ord_id,exec_id,verdict,penalty,expected_px,actual_px,expected_qty,actual_qty) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
             .bind(ts).bind(&row.contestant_id).bind(&row.cl_ord_id).bind(&row.exec_id)
             .bind(&row.verdict).bind(row.penalty)
@@ -82,6 +85,9 @@ impl Storage {
 
     pub async fn insert_ghost(&self, exec: &ExecutionEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let ts = Utc::now().naive_utc();
+        eprintln!("[STORAGE-INSERT] ghost {} {} seq={} last_shares={} last_px={:.4}",
+            exec.contestant_id, exec.cl_ord_id, exec.exec_seq,
+            exec.last_shares.unwrap_or(0), exec.last_px.unwrap_or(0.0));
         sqlx::query("INSERT INTO correctness_events (ts,contestant_id,cl_ord_id,exec_id,verdict,penalty,expected_px,actual_px,expected_qty,actual_qty) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
             .bind(ts).bind(&exec.contestant_id).bind(&exec.cl_ord_id).bind(&exec.exec_id)
             .bind("ghost").bind(-0.5f64).bind(0.0f64).bind(exec.last_px.unwrap_or(0.0))
@@ -92,6 +98,7 @@ impl Storage {
 
     pub async fn insert_lost(&self, cid: &str, cl: &str, px: f64, qty: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let ts = Utc::now().naive_utc();
+        eprintln!("[STORAGE-INSERT] lost {} {} exp_px={:.4} exp_qty={}", cid, cl, px, qty);
         sqlx::query("INSERT INTO correctness_events (ts,contestant_id,cl_ord_id,exec_id,verdict,penalty,expected_px,actual_px,expected_qty,actual_qty) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
             .bind(ts).bind(cid).bind(cl).bind("").bind("lost").bind(-0.5f64).bind(px).bind(0.0f64)
             .bind(qty as i64).bind(0i64).execute(&self.pg).await?;
@@ -101,6 +108,8 @@ impl Storage {
     pub async fn upsert_summary(&self, cid: &str, status: &str, sent: u64, recv: u64, correct: u64, total: u64, penalty: f64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let ts = Utc::now().naive_utc();
         let pct = if total > 0 { correct as f64 / total as f64 * 100.0 } else { 0.0 };
+        eprintln!("[STORAGE-UPSERT] {} status={} sent={} recv={} correct={} total={} pct={:.1}",
+            cid, status, sent, recv, correct, total, pct);
         sqlx::query("INSERT INTO contest_summary (ts,contestant_id,status,orders_sent,execs_received,correct_fills,total_fills,total_penalty,correctness_pct) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)")
             .bind(ts).bind(cid).bind(status).bind(sent as i64).bind(recv as i64)
             .bind(correct as i64).bind(total as i64).bind(penalty).bind(pct)
@@ -109,6 +118,7 @@ impl Storage {
     }
 
     pub async fn publish_leaderboard(&self, json: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        eprintln!("[STORAGE-LEADERBOARD] publishing: {}", json);
         let _: () = self.valkey.set("leaderboard:latest", json, None, None, false).await?;
         let _: () = self.valkey.publish("leaderboard:updates", json).await?;
         Ok(())
@@ -146,6 +156,7 @@ mod tests {
             contestant_id: "test".into(),
             drain_timeout_secs: 10,
             poll_interval_secs: 2,
+            gap_timeout_secs: 10,
         };
         let storage = Storage::connect(&cfg).await.expect("connect");
         storage.ensure_schema().await.expect("schema");

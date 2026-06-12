@@ -141,29 +141,3 @@ This schema defines the supported messages, raw formats, and template layouts fo
 8=FIX.4.2|9=138|35=8|49=XCANG3|56=CLIENT01|34=8|52=20260604-14:36:00|37=NONE|11=CL_ORD_01|17=REJ_771|20=0|150=8|39=8|55=INVALID|54=1|38=100|151=0|14=0|6=0|58=NO LIQUIDITY|10=099
 
 8=<BeginString = FIX.4.2>|9=<BodyLength>|35=<MsgType = 8>|49=<SenderCompID = XCANG3>|56=<TargetCompID>|34=<MsgSeqNum>|52=<SendingTime>|37=<OrderID = NONE>|11=<ClOrdID>|17=<ExecID>|20=<ExecTransType = 0>|150=<ExecType = 8>|39=<OrdStatus = 8>|55=<Symbol>|54=<Side>|38=<OrderQty>|151=<LeavesQty>|14=<CumQty>|6=<AvgPx = 0>|60=<TransactTime>|44=<Price for limit>|40=<OrdType>|58=<Text>|10=<CheckSum>
-
-<!-- ## 14) Order Cancel Request (35=F)
-
-### CLIENT Initiates (Requests cancellation of an active resting limit order):
-
-8=FIX.4.2|9=108|35=F|49=CLIENT01|56=XCANG3|34=9|52=20260604-14:37:00|41=CL_ORD_03|11=CL_CAN_01|55=AAPL|54=1|38=100|10=163
-
-8=<BeginString = FIX.4.2>|9=<BodyLength>|35=<MsgType = F>|49=<SenderCompID>|56=<TargetCompID = XCANG3>|34=<MsgSeqNum>|52=<SendingTime>|41=<OrigClOrdID>|11=<ClOrdID>|55=<Symbol>|54=<Side>|38=<OrderQty>|10=<CheckSum>
-
-## 15) Order Response: Canceled Confirmation (35=8)
-
-### XCANG3 Response (Confirms successful cancel from the book):
-
-8=FIX.4.2|9=154|35=8|49=XCANG3|56=CLIENT01|34=9|52=20260604-14:37:02|37=EX_ORD_99|11=CL_CAN_01|17=CAN_999|20=0|150=4|39=4|55=AAPL|54=1|38=100|151=0|14=0|6=0|41=CL_ORD_03|10=041
-
-8=<BeginString = FIX.4.2>|9=<BodyLength>|35=<MsgType = 8>|49=<SenderCompID = XCANG3>|56=<TargetCompID>|34=<MsgSeqNum>|52=<SendingTime>|37=<OrderID>|11=<ClOrdID>|17=<ExecID>|20=<ExecTransType = 0>|150=<ExecType = 4>|39=<OrdStatus = 4>|55=<Symbol>|54=<Side>|38=<OrderQty>|151=<LeavesQty>|14=<CumQty>|6=<AvgPx = 0>|41=<OrigClOrdID>|10=<CheckSum>
-
-## 16) Order Cancel Reject (35=9)
-
-### XCANG3 Response (Sent if the order has already traded or does not exist):
-
-8=FIX.4.2|9=114|35=9|49=XCANG3|56=CLIENT01|34=10|52=20260604-14:37:30|37=NONE|11=CL_CAN_01|41=CL_ORD_03|39=8|434=1|102=1|10=091
-
-8=<BeginString = FIX.4.2>|9=<BodyLength>|35=<MsgType = 9>|49=<SenderCompID = XCANG3>|56=<TargetCompID>|34=<MsgSeqNum>|52=<SendingTime>|37=<OrderID = NONE>|11=<ClOrdID>|41=<OrigClOrdID>|39=<OrdStatus>|434=<CxlRejResponseTo = 1>|102=<CxlRejReason = 1>|10=<CheckSum>
-
-*Note on 434 & 102*: 434=1 specifies that this response is rejecting an Order Cancel Request. 102=1 means "Unknown order". -->

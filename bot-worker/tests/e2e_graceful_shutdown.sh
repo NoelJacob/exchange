@@ -6,6 +6,8 @@
 # Requires: docker, psql, cargo, ~50s runtime.
 
 set -u -o pipefail
+RPS=${RPS:-30}
+DURATION=${DURATION:-8}
 
 INFRA_DIR="$(cd "$(dirname "$0")/../../infra" && pwd)"
 BOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -76,8 +78,9 @@ echo "  Ingester running (PID $INGESTER_PID)"
 echo "[6/8] Running bot-worker..."
 cd "$BOT_DIR"
 set +e
-timeout 65 cargo run --release -- \
-  --rps 30 --duration-secs 8 --fix-connections 2 --ws-connections 2 \
+timeout 120 cargo run --release -- \
+  --rps "$RPS" --duration-secs "$DURATION" \
+  --fix-connections 4 --ws-connections 4 --ramp-up-secs 2 \
   --redpanda-brokers "localhost:9092" --contestant-id "$CONTESTANT_ID" \
   &>"$BOT_LOG"
 BOT_EXIT=$?

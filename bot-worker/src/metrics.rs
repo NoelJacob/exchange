@@ -356,6 +356,8 @@ mod tests {
             latency_us: 500,
             last_shares: Some(50),
             last_px: Some(100.0),
+            leaves_qty: None,
+            cum_qty: None,
         });
 
         assert_eq!(m.fills.load(Ordering::Relaxed), 1);
@@ -380,6 +382,7 @@ mod tests {
             cl_ord_id: "t1".into(), exec_seq: 1, exec_type: "2".into(),
             side: "buy".into(), qty: 50, price: 100.0, is_market: false,
             latency_us: 500, last_shares: Some(50), last_px: Some(100.0),
+            leaves_qty: None, cum_qty: None,
         });
         let r = m.report();
         assert_eq!(r.orders_sent, 1);

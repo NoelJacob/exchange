@@ -3,12 +3,30 @@ use std::time::Duration;
 
 use bot_worker::config::Config;
 
+fn port_open(port: u16) -> bool {
+    std::net::TcpStream::connect_timeout(
+        &format!("127.0.0.1:{port}").parse().unwrap(),
+        Duration::from_millis(300),
+    )
+    .is_ok()
+}
+
+fn kill_stale() {
+    let _ = Command::new("pkill").args(["-9", "-f", "contestant-sample"]).status();
+    let _ = Command::new("sh")
+        .args(["-c", "fuser -k 9090/tcp 2>/dev/null; fuser -k 8080/tcp 2>/dev/null"])
+        .status();
+    std::thread::sleep(Duration::from_secs(2));
+}
+
 struct Server {
     child: Option<Child>,
 }
 
 impl Server {
     fn start() -> Self {
+        kill_stale();
+
         let candidates: Vec<String> = vec![
             "../contestant-sample/target/release/contestant-sample".to_string(),
             "../contestant-sample/target/debug/contestant-sample".to_string(),
@@ -21,23 +39,47 @@ impl Server {
             .find(|p| std::path::Path::new(p).exists())
             .cloned()
             .unwrap_or_else(|| {
-                let _status = Command::new("cargo")
+                eprintln!("[Test] Building contestant-sample release binary...");
+                let status = Command::new("cargo")
                     .args(["build", "--release"])
                     .current_dir("../contestant-sample")
                     .status()
-                    .expect("failed to build contestant-sample");
+                    .expect("failed to execute cargo build for contestant-sample");
+                assert!(status.success(), "cargo build --release for contestant-sample failed");
                 "../contestant-sample/target/release/contestant-sample".to_string()
             });
 
+        // Verify port 9090 is free before starting
+        assert!(
+            !port_open(9090),
+            "Port 9090 must be free before starting exchange"
+        );
+
         eprintln!("[Test] Starting {bin}...");
-        let child = Command::new(&bin)
+        let mut child = Command::new(&bin)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .expect("failed to spawn contestant-sample");
 
-        eprintln!("[Test] Waiting 4s for startup...");
-        std::thread::sleep(Duration::from_secs(4));
+        // Poll for port 9090 to open (up to 10s)
+        eprintln!("[Test] Waiting for contestant-sample to listen on 9090...");
+        let mut started = false;
+        for _ in 0..40 {
+            assert!(
+                child.try_wait().ok().flatten().is_none(),
+                "contestant-sample exited before binding port 9090"
+            );
+            if port_open(9090) {
+                started = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        assert!(started, "contestant-sample did not start listening on 9090 within 10s");
+
+        // Verify WS port opens quickly too
+        eprintln!("[Test] Contestant ready on 9090/8080");
 
         Server { child: Some(child) }
     }

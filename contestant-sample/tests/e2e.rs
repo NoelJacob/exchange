@@ -168,7 +168,6 @@ impl WsCli {
                 "side": side,
                 "qty": qty,
                 "price": price,
-                "seq": 1
             },
             "id": id
         });
@@ -202,7 +201,6 @@ impl WsCli {
                 "symbol": symbol,
                 "side": side,
                 "qty": qty,
-                "seq": 1
             },
             "id": id
         });
@@ -836,7 +834,6 @@ async fn parity_ws_unknown_method_rejected() {
             "side": "buy",
             "qty": 50,
             "price": 100.50,
-            "seq": 1
         },
         "id": 99999
     });

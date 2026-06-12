@@ -310,11 +310,12 @@ fn validate_fix_report(
         Ok(q) => q as u64,
         Err(_) => { metrics.record_error(format!("[FIX] {cl_ord_id}: missing OrderQty(38)")); 0 }
     };
+    let is_market = msg.body.get_string(tag::ORD_TYPE).map(|t| t == "1").unwrap_or(false);
     let price_val = match msg.body.get_string(tag::PRICE) {
         Ok(p) => p.parse::<f64>().unwrap_or_else(|_| { metrics.record_error(format!("[FIX] {cl_ord_id}: bad Price(44): {p}")); 0.0 }),
+        Err(_) if is_market => 0.0,  // market orders have no price, don't error
         Err(_) => { metrics.record_error(format!("[FIX] {cl_ord_id}: missing Price(44)")); 0.0 }
     };
-    let is_market = msg.body.get_string(tag::ORD_TYPE).map(|t| t == "1").unwrap_or(false);
     let leaves_qty = msg.body.get_int(tag::LEAVES_QTY).ok().filter(|&x| x >= 0).map(|x| x as u64);
     let cum_qty = msg.body.get_int(tag::CUM_QTY).ok().filter(|&x| x >= 0).map(|x| x as u64);
 
