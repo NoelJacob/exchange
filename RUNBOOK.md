@@ -146,21 +146,32 @@ cp contestant-sample/target/release/contestant-sample /tmp/contestant-sample-wro
 
 ## Running
 
-### Single-command start
+### Quick start (uses Docker multi-stage build)
 
 ```bash
-# One command builds images + starts everything needed for admin steps
+# Build images + start everything
 make start
 ```
 
-This brings up: QuestDB, Valkey, Redpanda, MinIO, platform-api (port 8080), telemetry-ingester.
-The `runner` service is NOT started — it spawns on-demand per contestant submit.
+This builds all Rust services inside Docker (`platform-api`, `telemetry-ingester`, `bot-worker`, `runner`) and starts: QuestDB, Valkey, Redpanda, MinIO, platform-api (port 8080), telemetry-ingester.
+The `runner` and `bot-worker` images are pre-built but NOT started as compose services — they spawn on-demand per test run.
 
 Wait ~15 seconds for QuestDB + Redpanda to become healthy, then verify:
 ```bash
 curl http://localhost:8080/health
 # {"status":"ok"}
 ```
+
+### Local binary start (faster iteration)
+
+```bash
+# Compile locally, then start with local binaries injected into containers
+make start-local
+```
+
+This compiles all Rust binaries on your host with `cargo build --release`, then builds lightweight Docker images that COPY from the local `target/release/` directory instead of re-compiling inside Docker. Much faster when iterating on code — only `target/` contents that changed are re-linked.
+
+Infrastructure images (QuestDB, Valkey, Redpanda, MinIO, runner) are built normally — only the Rust services use the local compilation path.
 
 ### Starting infrastructure only (for development / test workflows)
 
@@ -318,12 +329,12 @@ Weights are configurable via admin API before first contestant registration.
 | Command | Description |
 |---|---|
 | `make build` | Build all Rust crates (release) |
-| `make build-docker` | Build platform-api + telemetry-ingester Docker images |
+| `make build-local` | Compile all Rust binaries locally (release mode) |
 | `make build-wrong` | Build contestant-sample and copy to /tmp/contestant-sample-wrong |
 | `make infra` | `docker compose up -d` infrastructure services |
 | `make runner` | Build runner Docker image |
-| `make start` | Build + start everything: infra services + API + ingester |
-| `make ingester` | Start telemetry-ingester container |
+| `make start` | Build all Docker images + start everything (Docker multi-stage build) |
+| `make start-local` | Build locally + inject into Docker via `Dockerfile.local` (faster iteration) |
 | `make e2e` | Full end-to-end: infra → runner → start → submit → verify with scoring assertions |
 | `make e2e-demo` | Demo script: simpler flow, single binary to both contestants |
 | `make admin-create` | Create a contestant via admin API with interactive prompt |
@@ -335,7 +346,6 @@ Weights are configurable via admin API before first contestant registration.
 | `make logs` | Tail all service logs |
 | `make clean` | Remove all containers + networks + volumes |
 | `make stop` | `docker compose down` |
-
 ## E2E Demo Script
 
 ```bash

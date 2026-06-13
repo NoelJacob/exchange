@@ -23,12 +23,26 @@ build-all:   ## Build all services + both contestant variants
 	cargo build --release -p telemetry-ingester
 	cargo build --release -p bot-worker
 
-runner:      ## Build runner Docker image
+runner:       ## Build runner Docker image
 	docker compose -f infra/docker-compose.yml build runner
 
-start:       ## Build + start everything: infra services + API + ingester
-	docker compose -f infra/docker-compose.yml build platform-api telemetry-ingester
+build-local:  ## Compile all Rust binaries locally in release mode
+	cargo build --release -p platform-api -p telemetry-ingester -p bot-worker
+	cargo build --release -p contestant-sample
+	cp contestant-sample/target/release/contestant-sample /tmp/contestant-sample-correct
+	cargo build --release -p contestant-sample --features prefilled
+	cp contestant-sample/target/release/contestant-sample /tmp/contestant-sample-wrong
+	mv /tmp/contestant-sample-correct contestant-sample/target/release/contestant-sample
+
+start:        ## Build + start everything: infra services + API + ingester
+	docker compose -f infra/docker-compose.yml build platform-api telemetry-ingester bot-worker runner
 	docker compose -f infra/docker-compose.yml up -d questdb valkey redpanda minio platform-api telemetry-ingester
+
+start-local:  ## Build binaries locally, then start everything using Dockerfile.local
+	$(MAKE) build-local
+	docker compose -f infra/docker-compose.yml -f infra/docker-compose.local.yml build platform-api telemetry-ingester bot-worker
+	docker compose -f infra/docker-compose.yml build runner
+	docker compose -f infra/docker-compose.yml -f infra/docker-compose.local.yml up -d questdb valkey redpanda minio platform-api telemetry-ingester
 
 stop:        ## Stop all services
 	docker compose -f infra/docker-compose.yml down
