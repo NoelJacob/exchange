@@ -1,4 +1,5 @@
 ## Architecture
+> This project is only partially working due to time constaints.
 
 ```
 Admin
