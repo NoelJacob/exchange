@@ -1,60 +1,201 @@
-# Production Runbook — Hackathon Platform
-
-## Architecture Overview
+## Architecture
 
 ```
-         ┌─────────────────────────────────────────────────────────────┐
-         │  Internet                                                   │
-         │  Port 8080                                                  │
-         │                                                             │
-         │  ┌─────────────────────────────────────────────────────────┐│
-         │  │  platform-api (axum)                                    ││
-         │  │  • /api/admin/register — contestants                   ││
-         │  │  • /api/admin/config — test parameters                 ││
-         │  │  • /api/contestant/submit — upload binary              ││
-         │  │  • /api/contestant/status — run status                 ││
-         │  │  • /api/leaderboard — scored results                   ││
-         │  │  • /api/events — SSE live updates                      ││
-         │  │  • /api/internal/* — runner/bot webhooks               ││
-         │  └─────────────────────────────────────────────────────────┘│
-         └──────────────────────┬──────────────────────────────────────┘
-                                │
-          ┌─────────────────────┼─────────────────────┐
-          │                     │                      │
-          ▼                     ▼                      ▼
-   ┌────────────┐    ┌─────────────────┐    ┌──────────────────┐
-   │  Valkey     │    │  QuestDB         │    │  MinIO            │
-   │  (Redis)   │    │  (Timeseries)    │    │  (Binary storage) │
-   │  • config  │    │  • order_events  │    │  contestant-      │
-   │  • tokens  │    │  • exec_events   │    │  binaries/        │
-   │  • weights │    │  • metric_events │    └──────────────────┘
-   │  • pub/sub │    │  • contest_summary│
-   └────────────┘    │  • correctness    │
-                     └──────────────────┘
-                              ▲
-                              │
-   ┌──────────────────────────┴──────────────────────────┐
-   │  Redpanda (Kafka-compatible event bus)              │
-   │  Topics: orders, executions, metrics               │
-   │                                                     │
-   │  ┌─────────────────┐    ┌─────────────────────┐    │
-   │  │  bot-worker      │    │  telemetry-ingester  │    │
-   │  │  (sends orders,  │    │  (consumes execs,   │    │
-   │  │   receives exec) │    │   verifies fills,   │    │
-   │  │   → Redpanda     │    │   scores composites)│    │
-   │  └─────────────────┘    └─────────────────────┘    │
-   └────────────────────────────────────────────────────┘
+Admin
+  │
+  ├── curl http://localhost:8080/...           (direct)
+  └── browser http://localhost:5173            (SvelteKit UI)
+
+                    ┌───────────────────────────────────────────────────────┐
+                    │  platform-api  (Rust / axum / :8080)                  │
+                    │                                                       │
+                    │  JSON endpoints                                       │
+                    │  Auth: JWT (jsonwebtoken)                             │
+                    │                                                       │
+                    │  Background tasks (tokio::spawn):                     │
+                    │    leaderboard_relay() — Redis SUBSCRIBE → SSE fan-out│
+                    │    docker_watcher()  — sandbox crash detection        │
+                    │                                                       │
+                    │  Clients: bollard (docker), s3 (minio),               |
+                    |  sqlx (questdb), rskafka (redpanda),                  |
+                    |  fred (redis), jsonwebtoken (auth)                    │
+                    └──────┬────────────────────┬───────────────────────────┘
+                           │ bollard            │ fred (SET bot:*:rps,
+                           │ docker.sock        │       SUBSCRIBE leaderboard:updates)
+         ┌─────────────────┼───────────────────────────────┐          │
+         ▼                 ▼                               ▼          │
+  sandbox-alice     sandbox-bob                    bot-alice-1  bot-alice-2
+  (runner image)    (runner image)                 bot-bob-1
+  FIX :9090         FIX :9090     (same internal    (rskafka produce)
+  WS  :8080         WS  :8080      port, docker net)      │
+         │                │                               │
+         └───────────────►│◄──────────────────────────────┘
+                          │ FIX + WebSocket orders
+                          │
+                    ┌─────▼────────────────────────────────────────────────┐
+                    │  Redpanda  (Kafka-compatible, :9092)                 │
+                    │                                                      │
+                    └──────┬───────────────────────────────────────────────┘
+                           │ rskafka consume
+                    ┌──────▼──────────────────────────────────────────────────────┐
+                    │  telemetry-ingester  (Rust)                                 │
+                    │                                                             │
+                    │  Per-contestant Verifier tasks (tokio::spawn):              │
+                    │    One task per contestant, each with own:                  │
+                    │      reference OrderBook — price-time priority mirror       │
+                    │      HDR Histogram        — real-time p99 for scaler        │
+                    │      correctness counters — correct/total fills             │
+                    │      exec_seq gap detection — per-contestant sequence       │
+                    │                                                             │
+                    │  At configurable interval (default 2s):                     │
+                    │    INSERT raw latency_events batch → QuestDB                │
+                    │    INSERT correctness_events batch → QuestDB                │
+                    │    UPSERT contest_summary (composite) → QuestDB             │
+                    │    PUBLISH leaderboard:updates {snapshot} → Redis           │
+                    └──────┬──────────────────────┬───────────────────────────────┘
+                           │ sqlx                 │ fred PUBLISH
+                    ┌──────▼───────────────┐  ┌───▼──────────────────────┐
+                    │  QuestDB (:5432)     │  │  Valkey (:6379)          │
+                    │                      │  │                          │
+                    │  contestants         │  │  token:{uuid} → id       │
+                    │  submission_tokens   │  │  test:{id}:status        │
+                    │  test_runs           │  │  bot:{id}:{n}:rps        │
+                    │  latency_events      │  │  config:weights          │
+                    │  correctness_events  │  │  cpu:pool (Set)          │
+                    │  contest_summary     │  │  leaderboard:updates     │
+                    └──────────────────────┘  │  (pub/sub channel)       │
+                           │                  └──────────────────────────┘
+                    Grafana reads
+                    percentile_disc() SQL
+                    on raw hypertables → charts
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  portal  (SvelteKit / :5173)                                        │
+  │  Server-side: cookie auth only (hooks.server.ts + login route)      │
+  │  Client-side: fetch() to platform-api:8080 for all data + mutations │
+  │  EventSource to platform-api:8080/api/leaderboard/stream (SSE)      │
+  │  Grafana iframe for charts (:3000)                                  │
+  └─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Prerequisites
+# Roles
+Admin - Sets Test parameters and creates contestants. Default password admin123.
+Contestant - Receives JWT token from admin and uses it upload binary. They can also see specific metrics on their specific page
+Public - They can see the leaderboard
 
-### System Requirements
-- **OS**: Linux (tested on Arch/CachyOS, should work on Ubuntu 24.04+)
-- **Docker**: 24+ with Compose v2 plugin
-- **Rust**: nightly (for `fixer-fix` / `orderbook-rs` dependencies)
-- **Make**: 4.x
-- **Memory**: 8GB+ RAM (QuestDB + Redpanda are memory-heavy)
-- **Disk**: 10GB free for Docker images + build artifacts
+# What is done
+This project is not fully complete but architecture and is in place and only debugging and rewriting current code is required to make it work.
+
+## Sample contestant binary in ./contestant-sample
+This is a FIX 4.2 and Websocket exchange binary. It can handle limit, market orders with GTC time set permanently and Self-trade prevention set permanently. Cancel orders are not implemented. These configs were out of scope for now. All these can be implemented trivially with minimal changes.
+
+It uses correct FIX 4.2 protocol and a WS format inspired by FIX protocol. The FIX 4.2 and WS schema -ish files are in constant-sample folder. Once started it receives FIX at 9090 port and WS at 8080 port.
+
+### Rust features
+Enable the following features to emulate a wrong binary:
+- prefilled: has prefilled orderbook with few limit orders already in
+- panic_10s: panics after 10 seconds and binary crashes
+- slow_submit: has a 100ms gap between the submit function taking inputs
+- randomize_price: increases the price by 10% up or down randomly
+
+## Bot worker
+It sends deterministic but high RPS requests to sample. It takes in the following params and defaults are set if not provided in bot-worker/src/config.rs. Config options:
+- Exchange target host
+- Exchange FIX port
+- Exchange WS port
+- Total RPS across all connections in this process
+- Starting RPS per process (ramps up to target)
+- Seconds to ramp from min_rps to rps
+- Redpanda brokers (empty = stdout only)
+- Contestant ID for multi-contestant routing
+- Test duration in seconds
+- RNG seed for deterministic order sequence
+- Seconds between metrics snapshot emissions
+- Number of parallel FIX sessions to open
+- Number of parallel WS connections to open
+- Prefix for SenderCompID — each session appends index ("BOT00", "BOT01", …)
+- Exchange TargetCompID for FIX
+
+It starts at min_rps and ramps to max_rps evenly through the time given. Multiple bots are spawned when one bot notifies it has reached max capacity over Redis.
+
+**It is feature complete and thoroughly tested**
+
+## Platform worker
+It coordinates the entire lifecycle of contestant, bot and verifier/telemetry containers and the entire thing. It has endpoints for for running and controlling with Axum. It uses Bollard API to build containers programmatically.
+
+The platform can be interacted through website and through curl directly at the endpoint. The curl direct endpoint exists to make Test Driven Development easier and test as we go along.
+After it boots up, admin configs settings via /config endpoint and then creates contestants at /register endpoint. It returns JWT token which is passed to contestant who use the JWT and POSTs binary at the /submit endpoint. They can also use the JWT to see /status endpoint which will give metrics. There is a /leaderboard public endpoint which sends current leaderboard snapshot as json. There is /sse endpoint which gives leaderboard stream.
+
+When binaries are uploaded to /submit endpoint, they are directly uploaded to MinIO which is open source S3 compatible storage. Then instantly images with runner script from infra/runner (runner images which are prebuilt during docker startup stage) are spawned. These use the MC binary, which is the MinIO client application to download from MinIO storage and start connecting to Redpanda and run it. Redpanda forwards info to ./telemetry-ingester, where correctness of orders are tested and raw data is writtern to QuestDB.
+
+The platform also creates bot-worker, it will spawn a nest bot when the current bot is at its full RPS for a given amount of seconds. And keep doing until everything fails or a platform limit is reached. If reached, it succeeds. The QuestDB data is used to create the leaderboard.
+
+**Currently can only run 1 binary. Not fully tested has spightetti code**
+
+## Verifier Ingestor
+This gets data from the bot and has a list of orders received and filled. The bot only issues order from a deterministic seed. The respose which goes to bot, goes to Redpanda, which goes to QuestDB. This QuestDB is polled by ingester and spawns a verifier for each binary. The verifier is a correct exchange made from the extensive tested code of contestant-binary. This sorts transaction for each binary by SEQ number and replays them and sees if the filling by binary is correct as per verifier. Weights are assigned to RPS, correctness, etc and this finally creates a composite score.
+
+The binary fills taker order immediately and gives notification but only gets notification for maker order filling later than when the order ws issued. Here, each order has a SEQ number and the verifier waits until the next seq arrives as order fill arrive not in order. When the next seq number arrives, the verifier continue. SEQ is a native tag in FIX and also added to custom WS specification.
+
+**Fully tested to work with 1 binary but not multiple and code line by line audit not done**
+
+## Redis, Redpanda, QuestDB and Minio
+It is pre-made docker image used to run these services, the images are started before everything and then bot worker is made but not started and platform is made and started.
+Redis is the shared config or status store, that provides configs to binaries when set by admin through curl or webpage.
+
+Redpanda is used to buffer and support scale, currently only 1 partition is used. For single partition, it is faster than Kafka although for multi partitions, currently Kafka 4+ (without zookeeper) is better.
+QuestDB was chosen because of its high throughout put but **bad choice** as it does not support all PGSQSL operations and a PGSQL client was used in Rust. It also shows poor concurrency, might be because WAL or Write Ahead Logging or Async writes was not used. TimescaleDB was perfect.
+MinIO is the object storage used to store uploaded binaries and download them after runner images are built. Isolates binaries rather than storing them on any other sensitive image or on admin device.
+
+### Security
+The runner docker image is hardened with strict cpu pinning, memory limit (256mb) and other things including an sccomp profile. Gvisor or firecracker VM was considered but docker provides enough isolation using strict settings. Read only runtime was considered but the mc binary downloads the contestant binary after the runner docker boots up and building docker with contestant binary inbuilt would increase time by too much.
+
+**Are premade images and provision and run correctly**
+
+## Infra and Scripts
+They have the docker-compose and docker-compose.local for local build of Rust component. It is used as docker compose override file. See Makefile to see how they are called. It also has a runner script which is given into each docker runner image and is used to set up binaries by downloading them from MinIo.
+
+**Makefiles will need changing**
+
+## Portal
+Web interface to the endpoints exposed by platform-api. Can be used instead of curl ing endpoint directly with JWT. Uses Svelte for simplicity but with full features of a React app.
+
+**Not started. Only scaffolding**
+
+# Development Style
+- The development was foundational AI heavy with DeepSeek v4 flash at xhigh using oh-my-pi harness. All working parts are not AI slop, AI was built to create a draft and let me incrementally build and customize that generated code to make it perfect.
+- AI was used to generate aggressive tests to test all cases including edg
+- Test driven development was used with integration test and E2E tests.
+- The Rust compiler also should provide correctness guarantees for AI rather than using loosely typed language.
+- The team was only me and intentionally set that way to see if it is doable by 1 person + AI. But **bad idea** manually coding, with isolated AI agent help, was faster and easier to debug.
+- 1 week can make this fully production ready by just sweeping code and fixing minor bugs and adding tests
+
+# Actually run it
+The following commands are actually simple curl to endpoints formatted by the jq tool. See Makefile for more details:
+The workflow to run is:
+1) make start (builds binaries in docker builder in Rust and runs in docker runner)
+-- OR --
+1) make start-local (builds binaries in Rust locally and copied release binaries to docker)
+
+2) Create a contestant using admin:
+make admin-create NAME="Alice"
+
+3) Use JWT received to upload binary by contestant:
+make submit NAME="Alice" FILE="/path/to/binary"
+-- OR USE SAMPLE --
+make submit NAME="Alice" FILE="./contestant-sample/target/release/contestant-sample"
+
+4) Get current binary status
+make status NAME="Alice"
+
+5) See leaderboard snapshot at current time:
+make leaderboard
+
+6) Stream SSE events (Use CTRL + C to STOP):
+make events
+
+7) Stop everything and clean state:
+make clean
 
 ### Hosts / DNS
 Containers communicate by hostname on the `infra_default` bridge network:
@@ -91,212 +232,6 @@ All services are configured via environment variables (defaults shown):
 | `POLL_INTERVAL_SECS` | `2` | Verifier poll interval |
 | `GAP_TIMEOUT_SECS` | `30` | Max wait for out-of-order exec_events |
 
-### bot-worker
-| Argument | Default | Description |
-|---|---|---|
-| `--target-host` | **required** | FIX server hostname |
-| `--fix-port` | `9090` | FIX TCP port |
-| `--ws-port` | `8080` | WebSocket port |
-| `--rps` | `30` | Target orders per second |
-| `--duration-secs` | `20` | Test duration |
-| `--fix-connections` | `4` | FIX session count |
-| `--ws-connections` | `4` | WebSocket connection count |
-| `--redpanda-brokers` | `127.0.0.1:9092` | Redpanda endpoints |
-| `--contestant-id` | **required** | Assigned contestant ID |
-
-### Admin Configuration (API)
-Weights stored in Valkey `config:weights` hash, defaults:
-
-| Key | Default | Purpose |
-|---|---|---|
-| `correctness_weight` | `0.40` | Correctness score weight |
-| `tps_weight` | `0.35` | Throughput score weight |
-| `p99_weight` | `0.25` | Latency score weight |
-
-## Building
-
-### 1. Build all binaries (release)
-```bash
-make build
-```
-This runs `cargo build --release` in:
-- `contestant-sample/` — the sample exchange FIX/WS server
-- `bot-worker/` — the load-test bot that generates orders
-- `telemetry-ingester/` — consumes events, verifies correctness, scores
-- `platform-api/` — HTTP API server
-
-### 2. Build Docker images
-```bash
-make build-docker
-make runner
-```
-- `platform-api` → `infra-platform-api:latest`
-- `telemetry-ingester` → `infra-telemetry-ingester:latest`
-- `runner` → `infra-runner:latest`
-- `bot-worker` → `infra-bot-worker:latest`
-
-### 3. (Optional) Create wrong binary for correctness gap testing
-```bash
-# Build a version that will produce incorrect results
-# (e.g., swap SIDE on orders)
-# Copy to expected path for e2e script
-cp contestant-sample/target/release/contestant-sample /tmp/contestant-sample-wrong
-# Manually modify the wrong binary's behavior (the e2e script expects a wrong binary at /tmp/contestant-sample-wrong)
-```
-
-## Running
-
-### Quick start (uses Docker multi-stage build)
-
-```bash
-# Build images + start everything
-make start
-```
-
-This builds all Rust services inside Docker (`platform-api`, `telemetry-ingester`, `bot-worker`, `runner`) and starts: QuestDB, Valkey, Redpanda, MinIO, platform-api (port 8080), telemetry-ingester.
-The `runner` and `bot-worker` images are pre-built but NOT started as compose services — they spawn on-demand per test run.
-
-Wait ~15 seconds for QuestDB + Redpanda to become healthy, then verify:
-```bash
-curl http://localhost:8080/health
-# {"status":"ok"}
-```
-
-### Local binary start (faster iteration)
-
-```bash
-# Compile locally, then start with local binaries injected into containers
-make start-local
-```
-
-This compiles all Rust binaries on your host with `cargo build --release`, then builds lightweight Docker images that COPY from the local `target/release/` directory instead of re-compiling inside Docker. Much faster when iterating on code — only `target/` contents that changed are re-linked.
-
-Infrastructure images (QuestDB, Valkey, Redpanda, MinIO, runner) are built normally — only the Rust services use the local compilation path.
-
-### Starting infrastructure only (for development / test workflows)
-
-```bash
-make infra
-```
-Starts only QuestDB, Valkey, Redpanda, MinIO — useful when running platform-api from source with `cargo run`.
-
-### Per-service restarts (debugging)
-
-```bash
-docker compose -f infra/docker-compose.yml logs -f platform-api
-docker compose -f infra/docker-compose.yml logs -f telemetry-ingester
-```
-
-### Setting admin config (before first contestant — optional)
-
-Configure test parameters common to all contestants via the admin API. Config is locked after the first contestant is registered.
-
-```bash
-# Set RPS, duration, and score weights (all optional — see defaults below)
-curl -X PUT http://localhost:8080/api/admin/config \
-  -H "X-Admin-Password: admin123" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "rps": 30,
-    "duration_secs": 25,
-    "correctness_weight": 0.40,
-    "tps_weight": 0.35,
-    "p99_weight": 0.25
-  }' | jq .
-
-# Read current config
-curl http://localhost:8080/api/admin/config | jq .
-```
-
-### Defaults (when config is not set)
-
-If the admin does NOT configure parameters before registering contestants, these built-in defaults apply:
-
-| Parameter | Default |
-|---|---|
-| **rps** | 30 orders/second |
-| **duration_secs** | 15 seconds per test run |
-| **correctness_weight** | 0.40 |
-| **tps_weight** | 0.35 |
-| **p99_weight** | 0.25 |
-
-Config can be set at any time before the first `admin_register` call, after which it is locked.
-Uses `make admin-config` to see current values, or the curl command above.
-
-## Submitting Contestants
-
-### Via Admin API (end-to-end flow)
-
-#### a) Set admin config (optional — defaults apply)
-
-See "Setting admin config" above. If skipped, built-in defaults (30rps/15s) are used.
-
-#### b) Register contestants
-
-```bash
-# Register "Correct" contestant
-curl -X POST http://localhost:8080/api/admin/register \
-  -H "X-Admin-Password: admin123" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Correct"}' | jq .
-
-# Register "Wrong" contestant
-curl -X POST http://localhost:8080/api/admin/register \
-  -H "X-Admin-Password: admin123" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Wrong"}' | jq .
-```
-
-Save the `jwt` and `contestant_id` from each response.
-
-#### c) Submit binaries (binary only — rps/duration are set by admin)
-
-```bash
-# Submit correct binary
-curl -X POST http://localhost:8080/api/contestant/submit \
-  -H "Authorization: Bearer $CJWT" \
-  -F "binary=@contestant-sample/target/release/contestant-sample" | jq .
-
-# Submit wrong binary
-curl -X POST http://localhost:8080/api/contestant/submit \
-  -H "Authorization: Bearer $WJWT" \
-  -F "binary=@/tmp/contestant-sample-wrong" | jq .
-```
-
-Save the `run_id` from each response.
-
-#### c) Monitor status
-```bash
-curl -s http://localhost:8080/api/contestant/status \
-  -H "Authorization: Bearer $CJWT" | jq .
-# Shows: status, metrics.correctness_pct, orders_sent, fills
-```
-
-#### d) Poll until completion
-```bash
-for i in $(seq 1 30); do
-  STATUS=$(curl -s http://localhost:8080/api/contestant/status \
-    -H "Authorization: Bearer $CJWT" | jq -r '.status // "running"')
-  echo "  Attempt $i: status=$STATUS"
-  [ "$STATUS" = "success" ] || [ "$STATUS" = "failed" ] && break
-  sleep 5
-done
-```
-
-#### e) Check leaderboard
-```bash
-curl -s http://localhost:8080/api/leaderboard | jq .
-# Fields: contestant_id, name, correctness_pct, composite,
-#         current_tps, failure_reason, orders_sent, total_fills
-```
-
-#### f) Live SSE stream
-```bash
-curl -N http://localhost:8080/api/events
-# Streams: event: keepalive\ndata: ping
-#          event: leaderboard\ndata: {...}
-```
-
 ## Scoring
 
 Composite score computed by the verifier (in telemetry-ingester):
@@ -324,229 +259,3 @@ Weights are configurable via admin API before first contestant registration.
 | `startup_failed` | Runner container exits before sending ready signal |
 | `deploy_connect_failed` | Runner cannot connect to MinIO |
 | `deploy_startup_failed` | Contestant binary fails to start |
-
-## Makefile Targets
-| Command | Description |
-|---|---|
-| `make build` | Build all Rust crates (release) |
-| `make build-local` | Compile all Rust binaries locally (release mode) |
-| `make build-wrong` | Build contestant-sample and copy to /tmp/contestant-sample-wrong |
-| `make infra` | `docker compose up -d` infrastructure services |
-| `make runner` | Build runner Docker image |
-| `make start` | Build all Docker images + start everything (Docker multi-stage build) |
-| `make start-local` | Build locally + inject into Docker via `Dockerfile.local` (faster iteration) |
-| `make e2e` | Full end-to-end: infra → runner → start → submit → verify with scoring assertions |
-| `make e2e-demo` | Demo script: simpler flow, single binary to both contestants |
-| `make admin-create` | Create a contestant via admin API with interactive prompt |
-| `make admin-config` | Show current admin config (rps, duration, weights) |
-| `make submit` | Submit binary (`NAME=`, `FILE=`) |
-| `make status` | Show contestant status from JWT at `/tmp/jwt-*.json` |
-| `make leaderboard` | Show current leaderboard |
-| `make events` | Watch SSE event stream |
-| `make logs` | Tail all service logs |
-| `make clean` | Remove all containers + networks + volumes |
-| `make stop` | `docker compose down` |
-## E2E Demo Script
-
-```bash
-bash scripts/e2e-demo.sh
-```
-Or via Make:
-```bash
-make e2e-demo
-```
-
-The demo script:
-1. Builds all release binaries + Docker images
-2. Starts infra (questdb, valkey, redpanda, minio)
-3. Starts platform-api and telemetry-ingester
-4. Creates 2 contestants via admin API
-5. Submits the same binary to both
-6. Polls status 20×3s
-7. Shows leaderboard and contestant metrics
-8. Verifies container cleanup
-
-The full E2E (`make e2e`) additionally expects a *wrong* binary at `/tmp/contestant-sample-wrong` and asserts the correctness gap + composite > 0 + TPS > 0.
-
-## Portal (SvelteKit)
-
-A frontend portal lives at `portal/` in the monorepo. It connects to the platform-api on port 8080 with CORS origin `http://localhost:5173`. Start it independently:
-```bash
-cd portal
-npm install
-npm run dev
-```
-
-## Security & Sandboxing
-
-Contestant binaries run with:
-- **seccomp** — system call filtering via container runtime
-- **Capability dropping** — `CAP_DROP = ALL`
-- **Read-only rootfs** — contestant containers have read-only filesystems
-- **cpuset-cpus** — pinned CPU set per container
-- **Network isolation** — contestant can only listen on FIX/WS ports, no egress to internet
-
-The admin password (`ADMIN_PASSWORD=admin123`, change in production) protects registration and configuration. Internal runner webhooks are authenticated via a shared `INTERNAL_TOKEN`.
-### Controlling specific services
-```bash
-# Start individual services
-docker compose -f infra/docker-compose.yml up -d questdb
-docker compose -f infra/docker-compose.yml up -d valkey
-docker compose -f infra/docker-compose.yml up -d redpanda
-docker compose -f infra/docker-compose.yml up -d minio
-
-# View logs
-docker compose -f infra/docker-compose.yml logs -f platform-api
-docker compose -f infra/docker-compose.yml logs -f telemetry-ingester
-docker compose -f infra/docker-compose.yml logs -f runner
-docker compose -f infra/docker-compose.yml logs -f redpanda
-```
-
-## Testing
-
-### Unit tests
-```bash
-# All crates (sequential recommended for database tests)
-cargo test -- --test-threads=1 -p platform-api
-cargo test -- --test-threads=1 -p telemetry-ingester
-cargo test -- --test-threads=1 -p bot-worker
-cargo test -- --test-threads=1 -p contestant-sample
-```
-
-### E2E test
-```bash
-# Full pipeline: builds everything, spins up infra, submits both
-# correct and wrong binaries, asserts correctness gap + composite > 0
-make e2e
-
-# Or the minimal script (requires infra+builds already done):
-bash scripts/e2e-minimal.sh
-```
-
-### Integration test (telemetry-ingester)
-```bash
-cd telemetry-ingester
-cargo test test_full_telemetry_pipeline -- --test-threads=1 --nocapture
-```
-⚠️ Requires Docker services running and builds all release binaries from scratch.
-
-## Debugging
-
-### Common issues
-
-#### 1. `ERR Can't execute 'get': only SUBSCRIBE commands allowed`
-The `leaderboard_relay` background task uses a **dedicated** Redis connection for Pub/Sub, but only if the app starts with the `redis_url` parameter properly configured. Verify:
-- `platform-api` was rebuilt after the relay fix
-- `cfg.redis_url` is set in env or config
-
-#### 2. Out-of-order exec_events
-The verifier polls `exec_events` by `exec_seq`. If events arrive out of order, it waits up to `GAP_TIMEOUT_SECS` (default 30s). If still missing, the gap is skipped and logged as `[VERIFIER-GAP]`.
-
-Check:
-```bash
-docker compose -f infra/docker-compose.yml logs telemetry-ingester | grep VERIFIER-GAP
-```
-
-#### 3. Runner cannot connect to MinIO
-The runner container needs DNS resolution for `minio:9000`. Ensure:
-- Container has `--dns 127.0.0.11`
-- Network is `infra_default`
-- MinIO bucket `contestant-binaries` exists with public read policy
-
-#### 4. Bot container exits immediately
-Check:
-```bash
-docker logs $(docker ps -a --filter name=bot- --format '{{.ID}}' | head -1)
-```
-Common causes: cannot reach `target-host:9090`, GLIBC mismatch (fixed by Ubuntu 24.04 base image).
-
-#### 5. Composite score is -1.0
-No metric events received by telemetry-ingester after 10+ fills. Verify:
-- Redpanda `metrics` topic exists and has data
-- Telemetry-ingester subscribes to `metrics` topic (check logs for `[INGEST]`)
-- Bot-worker configured with `--redpanda-brokers redpanda:9092`
-
-### Useful queries
-
-```sql
--- QuestDB: check event counts
-SELECT count(*) FROM order_events;
-SELECT count(*) FROM exec_events;
-SELECT count(*) FROM metric_events;
-
--- Latest contest summary
-SELECT * FROM contest_summary ORDER BY ts DESC LIMIT 10;
-
--- Check for exec_seq gaps
-SELECT exec_seq, exec_type, cl_ord_id FROM exec_events
-ORDER BY exec_seq LIMIT 100;
-```
-
-```bash
-# Check Redpanda topics
-docker exec infra-redpanda-1 rpk topic list
-docker exec infra-redpanda-1 rpk topic consume orders --num 5
-docker exec infra-redpanda-1 rpk topic consume metrics --num 5
-
-# Check Valkey config
-docker exec infra-valkey-1 redis-cli HGETALL config:weights
-
-# Check MinIO
-docker exec infra-minio-1 mc ls local/contestant-binaries/
-```
-
-## Docker Compose Services
-
-All services defined in `infra/docker-compose.yml`:
-
-| Service | Port(s) | Image | Purpose |
-|---|---|---|---|
-| `questdb` | `8812:8812` | `questdb/questdb:latest` | Timeseries database |
-| `valkey` | `6379:6379` | `valkey/valkey:latest` | Redis-compatible cache/pubsub |
-| `redpanda` | `9092:9092`, `9644:9644` | `docker.redpanda.com/redpandadata/redpanda:latest` | Kafka-compatible event bus |
-| `minio` | `9000:9000`, `9001:9001` | `minio/minio:latest` | S3-compatible binary storage |
-| `runner` | — | `infra-runner:latest` | Test runner (per-submit) |
-| `platform-api` | `8080:8080` | `infra-platform-api:latest` | HTTP API |
-| `telemetry-ingester` | — | `infra-telemetry-ingester:latest` | Event consumer + verifier |
-| `bot-worker` | — | `infra-bot-worker:latest` | Load-test bot (per-submit) |
-
-## State Management
-
-**Docker stateless**: `docker compose down` or `make clean` wipes all state.
-
-Data volumes:
-- `infra_minio-data` — binary uploads (persists across `down`/`up` unless removed with `-v`)
-
-Database tables (QuestDB, auto-created on telemetry-ingester startup):
-- `order_events` — raw order submissions
-- `exec_events` — execution reports (with `exec_seq` for ordering)
-- `metric_events` — per-interval metrics snapshots (p50/p90/p99 + cumulative counts)
-- `correctness_events` — per-fill verdicts (correct/wrong/ghost)
-- `contest_summary` — aggregated per-contestant results (with composite score)
-
-Valkey keys:
-- `config:locked` — set when first contestant registered
-- `config:weights` — hash: `correctness_weight`, `tps_weight`, `p99_weight`
-- `cfg:default:rps` — default requests-per-second
-- `cfg:default:duration_secs` — default test duration
-- `token:<uuid>` — upload tokens (expiring)
-- `leaderboard:updates` — PubSub channel for real-time leaderboard updates
-
-## Stopping
-
-```bash
-make stop
-```
-Or equivalently:
-```bash
-docker compose -f infra/docker-compose.yml down
-```
-This stops all containers and wipes all state (databases, caches, topics). Volumes can be removed with `docker compose down -v`.
-
-## Performance Notes
-
-- **Telemetry-ingester** start takes ~30s as it replays unprocessed events and catches up
-- **Runner** containers are per-submit and auto-cleaned after exit
-- **Bot-worker** containers are per-submit and killed after completion
-- QuestDB ingestion can handle 10k+ events/sec in a single container
-- Redpanda default config uses in-memory storage; logs accumulate at ~200MB/hour under load

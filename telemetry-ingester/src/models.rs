@@ -73,6 +73,10 @@ pub struct MetricEvent {
     #[serde(default)]
     pub rejects: u64,
     #[serde(default)]
+    pub orders_fix: u64,
+    #[serde(default)]
+    pub orders_ws: u64,
+    #[serde(default)]
     pub errors: u64,
     #[serde(default)]
     pub p50: u64,

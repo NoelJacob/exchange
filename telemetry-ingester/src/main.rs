@@ -10,28 +10,35 @@ use clap::Parser;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    tracing_subscriber::fmt()
+    eprintln!("[TELEMETRY] main() called — init starting");
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| "info".into()))
         .init();
+    eprintln!("[TELEMETRY] tracing initialized, parsing config...");
 
-    let config = config::Config::parse();
+    let cfg = config::Config::parse();
 
     eprintln!("[Main] Telemetry ingester starting...");
-    eprintln!("[Main] Redpanda: {}", config.redpanda_brokers);
-    eprintln!("[Main] QuestDB: {}", config.questdb_pgwire);
-    eprintln!("[Main] Valkey: {}", config.valkey_addr);
+    eprintln!("[Main] Redpanda: {}", cfg.redpanda_brokers);
+    eprintln!("[Main] QuestDB: {}", cfg.questdb_pgwire);
+    eprintln!("[Main] Valkey: {}", cfg.valkey_addr);
+    eprintln!("[Main] Config: redpanda={} questdb={} valkey={}", 
+        cfg.redpanda_brokers, cfg.questdb_pgwire, cfg.valkey_addr);
+    eprintln!("[Main] Env REDPANDA_BROKERS={:?}", std::env::var("REDPANDA_BROKERS"));
+    eprintln!("[Main] Env QUESTDB_URL={:?}", std::env::var("QUESTDB_URL"));
 
-    let storage = Arc::new(storage::Storage::connect(&config).await?);
+    let storage = Arc::new(storage::Storage::connect(&cfg).await?);
     storage.ensure_schema().await?;
     eprintln!("[Main] Schema ready");
 
-    let ing = ingester::Ingester::new(Arc::clone(&storage), config.clone());
-    let mut ver = verifier::Verifier::new(Arc::clone(&storage), config);
+    let ing = ingester::Ingester::new(Arc::clone(&storage), cfg.clone());
 
     let (ing_res, ver_res) = tokio::join!(
         tokio::spawn(async move { ing.run().await }),
-        tokio::spawn(async move { ver.run().await }),
+        tokio::spawn(async move {
+            verifier::run_verifiers(Arc::clone(&storage), cfg).await
+        }),
     );
     ing_res.map_err(|e| format!("Ingester panicked: {e}"))??;
     ver_res.map_err(|e| format!("Verifier panicked: {e}"))??;

@@ -5,7 +5,7 @@ use rskafka::client::{
     ClientBuilder, consumer::{StartOffset, StreamConsumerBuilder}, partition::UnknownTopicHandling,
 };
 use crate::config::Config;
-use crate::models::{ExecutionEvent, OrderEvent};
+use crate::models::{ExecutionEvent, MetricEvent, OrderEvent};
 use crate::storage::Storage;
 
 pub struct Ingester {
@@ -19,9 +19,14 @@ impl Ingester {
     }
 
     pub async fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let client = Arc::new(ClientBuilder::new(vec![self.config.redpanda_brokers.clone()]).build().await?);
+        let client = Arc::new(
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                ClientBuilder::new(vec![self.config.redpanda_brokers.clone()]).build(),
+            ).await.map_err(|_| "Ingester Redpanda connect timeout (5s)")??,
+        );
         let mut handles = Vec::new();
-        for &topic in &["orders", "executions"] {
+        for &topic in &["orders", "executions", "metrics"] {
             let client = Arc::clone(&client);
             let storage = Arc::clone(&self.storage);
             let ts = topic.to_string();
@@ -129,7 +134,11 @@ async fn store_event(storage: &Storage, topic: &str, text: &str) -> Result<(), B
         }
         "orders" => {
             if let Ok(e) = serde_json::from_str::<OrderEvent>(text) {
-                let ts = chrono::Utc::now().naive_utc();
+                let ts = chrono::DateTime::from_timestamp(
+                    (e.ts_us / 1_000_000) as i64,
+                    ((e.ts_us % 1_000_000) as u32) * 1_000,
+                ).map(|dt| dt.naive_utc())
+                .unwrap_or_else(|| chrono::Utc::now().naive_utc());
                 if let Err(err) = sqlx::query("INSERT INTO order_events (ts,contestant_id,cl_ord_id,side,qty,price,is_market,protocol) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)")
                     .bind(ts).bind(&e.contestant_id).bind(&e.cl_ord_id)
                     .bind(&e.side).bind(e.qty as i64).bind(e.price).bind(e.is_market)
@@ -140,13 +149,27 @@ async fn store_event(storage: &Storage, topic: &str, text: &str) -> Result<(), B
                 }
             }
         }
+        "metrics" => {
+            match serde_json::from_str::<MetricEvent>(text) {
+                Ok(ev) => {
+                    storage.insert_metric(&ev).await?;
+                }
+                Err(e) => {
+                    eprintln!("[INGEST-ERR] metrics parse failed: {e} — text={}", &text[..text.len().min(200)]);
+                }
+            }
+        }
         _ => {}
     }
     Ok(())
 }
 
 async fn insert_exec(storage: &Storage, e: &ExecutionEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let ts = chrono::Utc::now().naive_utc();
+    let ts = chrono::DateTime::from_timestamp(
+        (e.ts_us / 1_000_000) as i64,
+        ((e.ts_us % 1_000_000) as u32) * 1_000, // nanoseconds
+    ).map(|dt| dt.naive_utc())
+    .unwrap_or_else(|| chrono::Utc::now().naive_utc());
     eprintln!("[INGEST-INSERT] EXEC {}: seq={} type={} side={} qty={} price={} market={} last_shares={:?} last_px={:?} leaves={:?} cum={:?}",
         e.cl_ord_id, e.exec_seq, e.exec_type, e.side, e.qty, e.price, e.is_market,
         e.last_shares, e.last_px, e.leaves_qty, e.cum_qty);

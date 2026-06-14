@@ -19,7 +19,11 @@ pub struct RedpandaSink {
 
 impl RedpandaSink {
     pub async fn connect(brokers: &str, topic: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let client = ClientBuilder::new(vec![brokers.to_owned()]).build().await?;
+        use std::time::Duration;
+        let client = tokio::time::timeout(
+            Duration::from_secs(3),
+            ClientBuilder::new(vec![brokers.to_owned()]).build(),
+        ).await.map_err(|_| "Redpanda connect timeout (3s)")??;
         let partition_client = Arc::new(
             client.partition_client(topic, 0, UnknownTopicHandling::Retry).await?,
         );
