@@ -200,7 +200,25 @@ pub fn submit(
     info: &OrderInfo,
 ) -> Result<SubmitOutcome, SubmitError> {
     let user_hash = crate::hash_user_id(&info.target_id);
+
+    #[cfg(feature = "slow_submit")]
+    {
+        let delay = std::time::Duration::from_millis(100);
+        eprintln!("[SLOW] Sleeping {:?} before order submission...", delay);
+        std::thread::sleep(delay);
+    }
+
+    #[cfg(feature = "randomize_price")]
+    let limit_price_cents = {
+        let adjustment = if rand::random::<bool>() { 0.1 } else { -0.1 };
+        let randomized_price = info.price * (1.0 + adjustment);
+        let final_price = if randomized_price < 0.0 { 0.0 } else { randomized_price };
+        (final_price * 100.0).round() as u128
+    };
+
+    #[cfg(not(feature = "randomize_price"))]
     let limit_price_cents = (info.price * 100.0).round() as u128;
+
     let qty = info.order_qty;
     let taker_id = Id::new();
     let result: MatchResult = if is_market {
@@ -495,6 +513,85 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
     });
+
+    // ── prefilled mode: pre-insert stale orders before accepting external orders ──
+    #[cfg(feature = "prefilled")]
+    {
+        use std::time::Instant;
+        let start = Instant::now();
+        eprintln!("[PREFILL] ===== Pre-filling orderbook with stale orders =====");
+        let symbol = "BENCH";
+        let book = {
+            let mut books = state.books.lock();
+            eprintln!("[PREFILL] Acquired books lock, getting or creating book for symbol={symbol}");
+            get_or_create_book(&mut books, symbol, &state.trade_tx)
+        };
+
+        let book_ref = Arc::as_ref(&book);
+
+        let mut buy_ok = 0u32;
+        let mut buy_err = 0u32;
+        for i in 0..10 {
+            let price_cents = (9700 + i * 25) as u128;
+            let qty = 100;
+            let id = pricelevel::Id::new();
+            match book_ref.add_limit_order_with_user(
+                id, price_cents, qty, Side::Buy,
+                orderbook_rs::TimeInForce::Gtc,
+                hash_user_id("prefill-buy"), None::<()>,
+            ) {
+                Ok(_) => {
+                    buy_ok += 1;
+                    eprintln!("[PREFILL] BUY  order {}: price_cents={} qty={} OK",
+                        i, price_cents, qty);
+                }
+                Err(e) => {
+                    buy_err += 1;
+                    eprintln!("[PREFILL-ERR] BUY  order {}: price_cents={} FAILED: {:?}",
+                        i, price_cents, e);
+                }
+            }
+        }
+
+        let mut sell_ok = 0u32;
+        let mut sell_err = 0u32;
+        for i in 0..10 {
+            let price_cents = (10050 + i * 25) as u128;
+            let qty = 100;
+            let id = pricelevel::Id::new();
+            match book_ref.add_limit_order_with_user(
+                id, price_cents, qty, Side::Sell,
+                orderbook_rs::TimeInForce::Gtc,
+                hash_user_id("prefill-sell"), None::<()>,
+            ) {
+                Ok(_) => {
+                    sell_ok += 1;
+                    eprintln!("[PREFILL] SELL order {}: price_cents={} qty={} OK",
+                        i, price_cents, qty);
+                }
+                Err(e) => {
+                    sell_err += 1;
+                    eprintln!("[PREFILL-ERR] SELL order {}: price_cents={} FAILED: {:?}",
+                        i, price_cents, e);
+                }
+            }
+        }
+
+        let book_state = book_ref.get_bids().len() + book_ref.get_asks().len();
+        let elapsed = start.elapsed();
+        eprintln!("[PREFILL] ===== Pre-fill complete: {} buy OK, {} buy ERR, {} sell OK, {} sell ERR, {} price levels, took {:?} =====",
+            buy_ok, buy_err, sell_ok, sell_err, book_state, elapsed);
+    }
+
+    #[cfg(feature = "panic_10s")]
+    {
+        eprintln!("[PANIC_10S] Spawning panic timer — will crash in 10 seconds");
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            eprintln!("[PANIC_10S] Crashing process now!");
+            std::process::exit(1);
+        });
+    }
 
     let fix_state = Arc::clone(&state);
     let fix_handle = tokio::spawn(async move {
