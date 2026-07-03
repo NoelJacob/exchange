@@ -1,15 +1,5 @@
 services:
-  platform-api:
+  exchange:
     build:
-      context: ../platform-api
-      dockerfile: Dockerfile.local
-
-  telemetry-ingester:
-    build:
-      context: ../telemetry-ingester
-      dockerfile: Dockerfile.local
-
-  bot-worker:
-    build:
-      context: ../bot-worker
+      context: ../
       dockerfile: Dockerfile.local

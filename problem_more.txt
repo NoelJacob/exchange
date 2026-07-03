@@ -1,5 +1,0 @@
-The problem statement has like 4 parts:
-1. Given a server w/ some endpoints bombard it with workers and do correctness checks
-2. ⁠Take code and spin up server
-3. ⁠Do 1 and 2 at scale
-4. ⁠wrap a platform around it

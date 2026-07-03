@@ -1,0 +1,5 @@
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY target/release/contestant-sample /usr/local/bin/contestant-sample
+EXPOSE 9090 8080
+ENTRYPOINT ["/usr/local/bin/contestant-sample"]

@@ -1,4 +1,0 @@
-FROM ubuntu:24.04
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY target/release/bot-worker /usr/local/bin/bot-worker
-ENTRYPOINT ["/usr/local/bin/bot-worker"]

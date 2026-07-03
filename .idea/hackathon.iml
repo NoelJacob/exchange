@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="EMPTY_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/bot-worker/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/bot-worker/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/contestant-sample/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/contestant-sample/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/platform-api/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/platform-api/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/telemetry-ingester/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/telemetry-ingester/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/telemetry-ingester/tests" isTestSource="true" />
+      <excludeFolder url="file://$MODULE_DIR$/bot-worker/target" />
+      <excludeFolder url="file://$MODULE_DIR$/contestant-sample/target" />
+      <excludeFolder url="file://$MODULE_DIR$/platform-api/target" />
+      <excludeFolder url="file://$MODULE_DIR$/telemetry-ingester/target" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>
