@@ -10,10 +10,6 @@ use chrono::prelude::*;
 
 use crate::ExecutionReportMethod;
 
-// ── JSON-RPC 2.0 request envelope (per WS.md §1.1) ───────────────────
-
-/// Top-level WS request envelope. We use `serde_json::Value` for `params`
-/// and dispatch on `method` to validate the inner shape.
 #[derive(Deserialize, Debug)]
 struct WsRequest {
     jsonrpc: String,
@@ -22,14 +18,13 @@ struct WsRequest {
     id: serde_json::Value,
 }
 
-/// Limit-order params (per WS.md §2.1).
 #[derive(Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 struct CreateLimitParams {
     sender_id: String,
-    #[allow(dead_code)] // validated via WS.md schema; routing uses sender_id
+    #[allow(dead_code)]
     target_id: String,
-    #[allow(dead_code)] // echoed for client correlation, not used in matching
+    #[allow(dead_code)]
     sending_time: String,
     cl_ord_id: String,
     symbol: String,
@@ -38,7 +33,6 @@ struct CreateLimitParams {
     price: f64,
 }
 
-/// Market-order params (per WS.md §2.2).
 #[derive(Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 struct CreateMarketParams {
@@ -101,9 +95,6 @@ impl ParsedParams {
     }
 }
 
-// ── helpers ───────────────────────────────────────────────────────────
-
-/// Send a sync `error` envelope (per WS.md §1.3).
 fn send_error(
     ws_tx: &mpsc::UnboundedSender<String>,
     id: &serde_json::Value,
@@ -123,7 +114,6 @@ fn send_error(
     let _ = ws_tx.send(resp.to_string());
 }
 
-/// Send a sync `result` envelope with an `ExecutionReport` as params.
 pub fn report_to_json(report: &crate::ExecutionReport) -> serde_json::Value {
     let side = match report.side {
         Side::Buy => "buy",
@@ -240,8 +230,6 @@ fn side_to_book(s: &str) -> Result<orderbook_rs::Side, String> {
     }
 }
 
-// ── per-connection handler ───────────────────────────────────────────
-
 async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppState>) {
     let addr = stream.peer_addr().ok();
     eprintln!("[WS] New connection from {:?}", addr);
@@ -259,7 +247,7 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
     // Per-connection mpsc channel for async fill notifications.
     let (ws_tx, mut ws_rx) = mpsc::unbounded_channel::<String>();
 
-    // Writer task: drain ws_rx and send to WebSocket.
+    // Writer: consume ws_rx and send to WebSocket.
     let write_handle = tokio::spawn(async move {
         while let Some(text) = ws_rx.recv().await {
             if writer.send(Message::Text(text)).await.is_err() {
@@ -286,7 +274,6 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
             _ => continue,
         };
 
-        // 1. Parse the outer envelope.
         let req: WsRequest = match serde_json::from_str(&text) {
             Ok(r) => r,
             Err(e) => {
@@ -314,7 +301,6 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
             continue;
         }
 
-        // 2. Parse params per method.
         let parsed = match parse_params(&req.method, &req.params) {
             Ok(p) => p,
             Err(e) => {
@@ -329,7 +315,6 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
             }
         };
 
-        // 3. Side validation.
         let ob_side = match side_to_book(parsed.side_str()) {
             Ok(s) => s,
             Err(e) => {
@@ -358,14 +343,13 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
             continue;
         }
 
-        // 4. Price validation (limit only).
         if !is_market && (!price_f64.is_finite() || price_f64 <= 0.0) {
             send_error(
                 &ws_tx,
                 &req.id,
                 -32602,
                 "Invalid params",
-                &format!("non-positive/non-finite price {price_f64} for limit order"),
+                &format!("invalid price {price_f64} for limit order"),
             );
             continue;
         }
@@ -468,13 +452,13 @@ async fn handle_ws_client(stream: tokio::net::TcpStream, state: Arc<crate::AppSt
         });
 
         if ws_tx.send(resp.to_string()).is_err() {
-            eprintln!("[WS] Dropped response for {} — client disconnected (seq={} lost)", parsed.cl_ord_id(), exec_id);
+            eprintln!("[WS] Dropped response for {} client disconnected (seq={} lost)", parsed.cl_ord_id(), exec_id);
             break;  // Client is gone, stop processing
         }
     }
 
     eprintln!("[WS] Client disconnected");
-    // Dropping ws_tx will cause the writer task to exit.
+    // Dropping ws_tx will stop writer
     let _ = write_handle.await;
 }
 

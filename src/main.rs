@@ -14,15 +14,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use chrono::Utc;
 
-// ── types used by fix_server and ws_server ───────────────────────────
-
-/// Info tracked for a resting order so the dispatch task can route async
-/// fill notifications back to the correct connection.
 #[derive(Clone)]
 pub struct OrderInfo {
-    /// Target (recipient) identifier for async notifications — the original
-    /// `sender_id` from the request (FIX `TargetCompID` / WS `target_id`).
-    /// For omnibus, this is the user the response should route back to.
     pub target_id: String,
     pub cl_ord_id: String,
     pub order_qty: u64,
@@ -44,7 +37,7 @@ pub enum ConnectionKind {
     },
 }
 
-/// Shared mutable state for the entire application.
+/// Shared state for entire application
 pub struct AppState {
     pub books: Mutex<HashMap<String, Arc<OrderBook<()>>>>,
     pub pending: Mutex<HashMap<Id, OrderInfo>>,
@@ -53,9 +46,6 @@ pub struct AppState {
     pub exec_id_seq: AtomicU64,
 }
 
-// ── helpers ──────────────────────────────────────────────────────────
-
-/// SHA-256 hash of a user_id string, used as STP identifier.
 pub fn hash_user_id(user_id: &str) -> Hash32 {
     let mut hasher = Sha256::new();
     hasher.update(user_id.as_bytes());
@@ -65,7 +55,7 @@ pub fn hash_user_id(user_id: &str) -> Hash32 {
     Hash32::new(bytes)
 }
 
-/// Look up the orderbook for `symbol`, lazily creating one with a
+/// Look up the orderbook for `symbol`, lazily creating one with
 pub fn get_or_create_book(
     books: &mut HashMap<String, Arc<OrderBook<()>>>,
     symbol: &str,
@@ -86,50 +76,34 @@ pub fn get_or_create_book(
     )
 }
 
-// ── existing submit infrastructure ───────────────────────────────────
-
-/// Result of a successful submit.
 #[derive(Debug, Clone)]
 pub struct SubmitOutcome {
-    /// Total quantity filled (Σ trade quantities).
     pub filled_qty: u64,
-    /// Volume-weighted average fill price in integer cents.
-    /// `0` if `filled_qty == 0`.
+    /// `0` if `filled_qty == 0`
     pub avg_price_cents: u128,
-    /// For limit orders, quantity left to rest on the book (0 if fully
-    /// filled). Always 0 for market orders.
+    /// Always 0 for market orders
     pub resting_qty: u64,
-    /// Quantity filled in the last (or only) match.
+    /// Quantity filled in the last match
     pub last_shares: u64,
-    /// Fill price of the last (or only) match in integer cents.
+    /// Fill price of the last match in integer cents
     pub last_px_cents: u128,
-    /// Cumulative filled quantity for this order.
+    /// Cumulative filled quantity for this order
     pub cum_qty: u64,
-    /// Remaining quantity after this execution (0 for fully-filled/market).
+    /// Remaining quantity after this execution (0 for fully-filled/market)
     pub leaves_qty: u64,
 }
 
-/// Error returned by [`submit`].
-///
-/// These are recoverable business errors, not library corruption:
-/// callers should surface a Reject to the client.
 #[derive(Debug)]
 pub enum SubmitError {
-    /// Empty or partial opposite side. Market-order-only path can hit
-    /// this; limit orders still rest at the limit price.
     InsufficientLiquidity {
         side: Side,
         requested: u64,
         available: u64,
     },
-    /// Self-Trade Prevention cancelled the taker before any fills.
     SelfTradePrevented,
-    /// Operator-engaged kill switch is active.
     KillSwitchActive,
-    /// Pre-trade risk check failed (open-order count, notional, price band).
     RiskRejected { reason: String },
-    /// Underlying pricelevel error (e.g. checked arithmetic overflow,
-    /// invalid input, internal state issue).
+    /// Underlying pricelevel error (invalid input, internal state issue)
     PriceLevel(String),
 }
 
@@ -155,7 +129,7 @@ impl fmt::Display for SubmitError {
 
 impl std::error::Error for SubmitError {}
 
-/// Map an `OrderBookError` from the matching calls into our `SubmitError`.
+/// Map an `OrderBookError` into `SubmitError`.
 fn map_book_err(e: orderbook_rs::OrderBookError) -> SubmitError {
     use orderbook_rs::OrderBookError;
     match e {
@@ -179,18 +153,6 @@ fn map_book_err(e: orderbook_rs::OrderBookError) -> SubmitError {
     }
 }
 
-/// Submit a market or limit order to a book, returning the outcome or a
-/// typed error.
-///
-/// For limit orders with unfilled remainder, the helper automatically
-/// re-adds the order to the book as a resting GTC order at the limit
-/// price, and registers it in `pending` for async fill notifications.
-///
-/// **TradeListener is assumed to be already set on `book`** — the
-/// `match_limit_order_with_user` / `submit_market_order_with_user` calls
-/// fire the listener for every match, notifying the *existing* resting
-/// order's owner. The taker (this call) gets a sync response via the
-/// returned `SubmitOutcome`.
 #[allow(clippy::too_many_arguments)]
 pub fn submit(
     book: &OrderBook<()>,
@@ -231,7 +193,7 @@ pub fn submit(
     eprintln!("[EXCHANGE-TRADE] {}: submit {} {} @ price_cents={} is_market={}",
         info.cl_ord_id, if side == Side::Buy { "BUY" } else { "SELL" }, qty, limit_price_cents, is_market);
     for (i, t) in result.trades().as_vec().iter().enumerate() {
-        eprintln!("[EXCHANGE-TRADE] {}:   [{}] maker={:?} qty={} price_cents={}",
+        eprintln!("[EXCHANGE-TRADE] {}: [{}] maker={:?} qty={} price_cents={}",
             info.cl_ord_id, i, t.maker_order_id(), t.quantity().as_u64(), t.price().as_u128());
     }
     let filled_qty = result
@@ -283,10 +245,6 @@ pub fn submit(
         .map_err(|e| SubmitError::PriceLevel(format!("resting add failed: {e}")))?;
         pending.insert(rest_id, info.clone());
     }
-    // Taker's info is intentionally NOT inserted into `pending` — the
-    // WS handler emits the taker's async fill notification synchronously
-    // after `submit` returns (see `ws_server.rs`), avoiding the race
-    // between the dispatch task and the WS handler writing to `ws_tx`.
     Ok(SubmitOutcome {
         filled_qty,
         avg_price_cents,
@@ -297,12 +255,8 @@ pub fn submit(
         leaves_qty,
     })
 }
-// ── ExecutionReport: shared structured type for WS + FIX responses ────
 pub enum ExecutionReportMethod { New, Fill, Partial, Rejected }
 
-/// Structured execution report shared by the WS and FIX response builders.
-/// Created by [`build_execution_report`] (success) or manually for
-/// fill notifications / rejects.
 pub struct ExecutionReport {
     /// "New" | "Fill" | "Partial" | "Rejected"
     pub method: ExecutionReportMethod,
@@ -371,7 +325,7 @@ pub fn build_execution_report(
         price: info.price
     }
 }
-/// Build an [`ExecutionReport`] for a business-logic rejection.
+
 pub fn build_reject_report(
     reason: String,
     info: &OrderInfo,
@@ -401,8 +355,6 @@ pub fn build_reject_report(
     }
 }
 
-// ── dispatch task & main ────────────────────────────────────────────
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Contestant sample matching engine starting...");
@@ -416,10 +368,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         order_id_seq: AtomicU64::new(1),
         exec_id_seq: AtomicU64::new(1),
     });
-    // Dispatch task: receives TradeResults from all books and routes async
-    // fill notifications to the *resting* order's original connection.
-    // The taker's fill details are returned synchronously by `submit`
-    // (FIX: ExecReport via from_app; WS: included in the sync response).
+
     let dispatch_state = Arc::clone(&state);
     tokio::spawn(async move {
         while let Some(result) = trade_rx.recv().await {
@@ -463,7 +412,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     leaves_qty: leaves,
                 };
 
-                // Reserve seq BEFORE building report (exec_id is part of the FIX/WS payload)
+                // Reserve seq BEFORE building report
                 let exec_id = dispatch_state.exec_id_seq
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
                     .to_string();
@@ -514,16 +463,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
     });
 
-    // ── prefilled mode: pre-insert stale orders before accepting external orders ──
     #[cfg(feature = "prefilled")]
     {
         use std::time::Instant;
         let start = Instant::now();
-        eprintln!("[PREFILL] ===== Pre-filling orderbook with stale orders =====");
+        eprintln!("[PREFILL] Pre-filling orderbook");
         let symbol = "BENCH";
         let book = {
             let mut books = state.books.lock();
-            eprintln!("[PREFILL] Acquired books lock, getting or creating book for symbol={symbol}");
             get_or_create_book(&mut books, symbol, &state.trade_tx)
         };
 
@@ -542,12 +489,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ) {
                 Ok(_) => {
                     buy_ok += 1;
-                    eprintln!("[PREFILL] BUY  order {}: price_cents={} qty={} OK",
+                    eprintln!("[PREFILL] BUY order {}: price_cents={} qty={} OK",
                         i, price_cents, qty);
                 }
                 Err(e) => {
                     buy_err += 1;
-                    eprintln!("[PREFILL-ERR] BUY  order {}: price_cents={} FAILED: {:?}",
+                    eprintln!("[PREFILL-ERR] BUY order {}: price_cents={} FAILED: {:?}",
                         i, price_cents, e);
                 }
             }
@@ -579,16 +526,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let book_state = book_ref.get_bids().len() + book_ref.get_asks().len();
         let elapsed = start.elapsed();
-        eprintln!("[PREFILL] ===== Pre-fill complete: {} buy OK, {} buy ERR, {} sell OK, {} sell ERR, {} price levels, took {:?} =====",
+        eprintln!("[PREFILL] Pre-fill: {} buy OK, {} buy ERR, {} sell OK, {} sell ERR, {} price levels, took {:?}",
             buy_ok, buy_err, sell_ok, sell_err, book_state, elapsed);
     }
 
     #[cfg(feature = "panic_10s")]
     {
-        eprintln!("[PANIC_10S] Spawning panic timer — will crash in 10 seconds");
+        eprintln!("[PANIC_10S] Spawning panic timer crash in 10 seconds");
         std::thread::spawn(|| {
             std::thread::sleep(std::time::Duration::from_secs(10));
-            eprintln!("[PANIC_10S] Crashing process now!");
+            eprintln!("[PANIC_10S] Crashing process!");
             std::process::exit(1);
         });
     }

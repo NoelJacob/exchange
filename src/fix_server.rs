@@ -19,7 +19,6 @@ use fixer_fix::enums;
 
 use crate::ExecutionReportMethod;
 
-/// Pending reply to send through the channel.
 pub struct PendingReply {
     pub msg: Message,
     pub session_id: Arc<SessionID>,
@@ -31,7 +30,6 @@ struct FixApp {
 }
 
 impl FixApp {
-    /// Process a validated NewOrderSingle and send the sync ExecutionReport.
     #[allow(clippy::too_many_arguments)]
     fn process_new_order(
         &self,
@@ -56,7 +54,7 @@ impl FixApp {
             "[FIX] NewOrderSingle cl_ord_id={cl_ord_id} symbol={symbol} side={side_val} price={price} qty={order_qty} sender={sender_comp}",
         );
 
-        // Lock books, get/create book with TradeListener (scoped — released before submit)
+        // Lock books, get/create book with TradeListener
         let book = {
             let mut books = self.state.books.lock();
             crate::get_or_create_book(&mut books, symbol, &self.state.trade_tx)
@@ -81,7 +79,6 @@ impl FixApp {
 
         let (outcome, exec_id) = {
             let mut pending = self.state.pending.lock();
-            // Reserve exec_seq atomically. Will be reclaimed via CAS if send fails.
             let exec_id = self.state.exec_id_seq
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
                 .to_string();
@@ -98,7 +95,6 @@ impl FixApp {
         };
 
 
-        // Build ExecutionReport from outcome and send FIX 35=8
         let msg_body = match outcome {
             Ok(o) => {
                 let report = crate::build_execution_report(
@@ -161,7 +157,6 @@ impl Application for FixApp {
             return Err(unsupported_message_type());
         }
 
-        // --- session-level validation: return Err → library sends 35=3 ---
         let comp_id = msg
             .header
             .get_string(tag::SENDER_COMP_ID)
@@ -211,8 +206,6 @@ impl Application for FixApp {
             .get_string(tag::ORD_TYPE)
             .map_err(|_| required_tag_missing(tag::ORD_TYPE))?;
 
-        // For non-positive price validation we still go through business reject
-        // since 0.00 is valid FIX format, just not a valid trading price.
         let price: f64 = if ord_type == "1" {
             0.0
         } else if ord_type == "2" {
@@ -223,10 +216,10 @@ impl Application for FixApp {
 
             match price_str.parse::<f64>() {
                 Ok(p) if p > 0.0 => p,
-                _ => return Err(value_is_incorrect(tag::PRICE)), // caught by format validation above
+                _ => return Err(value_is_incorrect(tag::PRICE)),
             }
         } else {
-            // Validate OrdType — only 1 (Market) and 2 (Limit) are supported
+            // Validate OrdType only 1 (Market) and 2 (Limit) are supported
             return Err(incorrect_data_format_for_value(tag::ORD_TYPE));
         };
 
@@ -243,8 +236,7 @@ impl Application for FixApp {
         Ok(())
     }
 }
-/// Fill body tags of a FIX 35=8 ExecutionReport message from a structured
-/// [`ExecutionReport`].
+
 pub fn report_to_fix(report: &crate::ExecutionReport) -> Message {
     let mut msg = Message::new();
     msg.header.set_string(tag::MSG_TYPE, enums::msg_type::EXECUTION_REPORT);
@@ -348,7 +340,7 @@ ResetOnLogon=Y
     acceptor.start().await?;
     eprintln!("[FIX] Acceptor started on port 9090");
 
-    // Background task: drain reply channel and send messages
+    // Background task: consume reply channel and send messages
     tokio::spawn(async move {
         while let Some(PendingReply { msg, session_id }) = reply_rx.recv().await {
             let exec_id = msg.body.get_string(tag::EXEC_ID).unwrap_or_else(|_| "?".into());
@@ -364,7 +356,6 @@ ResetOnLogon=Y
         }
     });
 
-    // Keep alive
     tokio::signal::ctrl_c().await.ok();
     acceptor.stop().await;
     Ok(())
