@@ -6,7 +6,7 @@ It uses correct FIX 4.2 protocol and a custom WS format like FIX. Once started i
 It can handle multiple clients and uses the same orderbook for WS and FIX orders. The orderbook has no ticker symbols by default and symbols are created on the fly when orders come in, so you can name your symbols anything while sending requests.
 
 ### FIX and WS Schema
-The schema for FIX and WS are in `./FIX42.md` and `./WS.md` file. The FIX is standard industry schema and WS is a custom schema created by me inspired by FIX 4.2 but minimizing redundant arguments.
+The schema for FIX and WS are in [./FIX42.md](./FIX42.md) and [./WS.md](./WS.md) file. The FIX is standard industry schema and WS is a custom schema created by me inspired by FIX 4.2 but minimizing redundant arguments.
 
 ### Ports
 ```
